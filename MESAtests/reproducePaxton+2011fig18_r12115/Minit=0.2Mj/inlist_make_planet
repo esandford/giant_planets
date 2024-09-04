@@ -5,10 +5,10 @@
    create_initial_model = .true.
 
    save_model_when_terminate = .true.
-   save_model_filename ='planet_0.2_Mj_5.0_Rj.mod'
+   save_model_filename ='planet_0.2_Mj_1.5_Rj.mod'
 
    mass_in_gm_for_create_initial_model =3.79625d29
-   radius_in_cm_for_create_initial_model =3.5746d10
+   radius_in_cm_for_create_initial_model =1.07238d10
 
    kappa_lowT_prefix = 'lowT_Freedman11'
 
