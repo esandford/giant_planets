@@ -113,7 +113,7 @@
    !dr_div_cs_yr ! cell sound crossing time (years)
    !log_dr_div_cs_yr ! log10 cell sound crossing time (years)
 
-   !acoustic_radius ! sound time from center to outer cell boundary (sec)
+   acoustic_radius ! sound time from center to outer cell boundary (sec)
    !log_acoustic_radius ! log10(acoustic_radius) (sec)
    !acoustic_depth ! sound time from surface to outer cell boundary (sec)
    !log_acoustic_depth ! log10(acoustic_depth) (sec)
@@ -167,7 +167,7 @@
    !chiT ! dlnP_dlnT at constant Rho
 
    !csound ! sound speed
-   !log_csound
+   log_csound
    !csound_face ! sound speed (was previously called csound_at_face)
    !cs_at_cell_bdy ! sound speed at cell boundary (csound is at cell center)
    !v_div_cs ! velocity divided by sound speed
@@ -647,47 +647,47 @@
    !eps_phase_separation
 
 !# Oscillations
-   !brunt_N2 ! brunt-vaisala frequency squared
-   !brunt_N2_structure_term
-   !brunt_N2_composition_term
-   !log_brunt_N2_structure_term
-   !log_brunt_N2_composition_term
-   !brunt_A ! = N^2*r/g
-   !brunt_A_div_x2 ! x = r(k)/r(1)
-   !brunt_N2_dimensionless ! N2 in units of 3GM/R^3
-   !brunt_N_dimensionless ! N in units of sqrt(3GM/R^3)
-   !brunt_frequency ! cycles per day
-   !brunt_N ! sqrt(abs(brunt_N2))
-   !log_brunt_N ! log10(brunt_N)
-   !log_brunt_N2 ! log10(brunt_N2)
-   !log_brunt_N2_dimensionless ! log10(brunt_N2_dimensionless)
+   brunt_N2 ! brunt-vaisala frequency squared
+   brunt_N2_structure_term
+   brunt_N2_composition_term
+   log_brunt_N2_structure_term
+   log_brunt_N2_composition_term
+   brunt_A ! = N^2*r/g
+   brunt_A_div_x2 ! x = r(k)/r(1)
+   brunt_N2_dimensionless ! N2 in units of 3GM/R^3
+   brunt_N_dimensionless ! N in units of sqrt(3GM/R^3)
+   brunt_frequency ! cycles per day
+   brunt_N ! sqrt(abs(brunt_N2))
+   log_brunt_N ! log10(brunt_N)
+   log_brunt_N2 ! log10(brunt_N2)
+   log_brunt_N2_dimensionless ! log10(brunt_N2_dimensionless)
       
-   !brunt_B ! smoothed numerical difference
-   !brunt_nonB ! = grada - gradT
-   !log_brunt_B ! smoothed numerical difference
-   !log_brunt_nonB ! = grada - gradT
+   brunt_B ! smoothed numerical difference
+   brunt_nonB ! = grada - gradT
+   log_brunt_B ! smoothed numerical difference
+   log_brunt_nonB ! = grada - gradT
       
-   !sign_brunt_N2 ! sign of brunt_N2 (+1 for Ledoux stable; -1 for Ledoux unstable)
-   !brunt_nu ! brunt_frequency in microHz
-   !log_brunt_nu ! brunt_frequency in microHz
+   sign_brunt_N2 ! sign of brunt_N2 (+1 for Ledoux stable; -1 for Ledoux unstable)
+   brunt_nu ! brunt_frequency in microHz
+   log_brunt_nu ! brunt_frequency in microHz
       
-   !lamb_S ! lamb frequency for l=1: S = sqrt(2)*csound/r   (rad/s)
-   !lamb_S2 ! squared lamb frequency for l=1: S2 = 2*(csound/r)^2   (rad^2/s^2)
+   lamb_S ! lamb frequency for l=1: S = sqrt(2)*csound/r   (rad/s)
+   lamb_S2 ! squared lamb frequency for l=1: S2 = 2*(csound/r)^2   (rad^2/s^2)
    
-   !lamb_Sl1 ! lamb frequency for l=1; = sqrt(2)*csound/r   (microHz)
-   !lamb_Sl2 ! lamb frequency for l=2; = sqrt(6)*csound/r   (microHz)
-   !lamb_Sl3 ! lamb frequency for l=3; = sqrt(12)*csound/r   (microHz)
-   !lamb_Sl10 ! lamb frequency for l=10; = sqrt(110)*csound/r   (microHz)
+   lamb_Sl1 ! lamb frequency for l=1; = sqrt(2)*csound/r   (microHz)
+   lamb_Sl2 ! lamb frequency for l=2; = sqrt(6)*csound/r   (microHz)
+   lamb_Sl3 ! lamb frequency for l=3; = sqrt(12)*csound/r   (microHz)
+   lamb_Sl10 ! lamb frequency for l=10; = sqrt(110)*csound/r   (microHz)
 
-   !log_lamb_Sl1 ! log10(lamb_Sl1)
-   !log_lamb_Sl2 ! log10(lamb_Sl2)
-   !log_lamb_Sl3 ! log10(lamb_Sl3)
-   !log_lamb_Sl10 ! log10(lamb_Sl10)
+   log_lamb_Sl1 ! log10(lamb_Sl1)
+   log_lamb_Sl2 ! log10(lamb_Sl2)
+   log_lamb_Sl3 ! log10(lamb_Sl3)
+   log_lamb_Sl10 ! log10(lamb_Sl10)
       
-   !brunt_N_div_r_integral ! integral from center of N*dr/r
-   !k_r_integral ! integral from center of k_r*dr
-   !brunt_N2_sub_omega2
-   !sl2_sub_omega2
+   brunt_N_div_r_integral ! integral from center of N*dr/r
+   k_r_integral ! integral from center of k_r*dr
+   brunt_N2_sub_omega2
+   sl2_sub_omega2
 
 
 !# RSP

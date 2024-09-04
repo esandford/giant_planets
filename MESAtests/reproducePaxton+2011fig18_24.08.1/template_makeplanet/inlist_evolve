@@ -11,6 +11,9 @@
    save_model_filename = "planet_evolve_20.0_MJ_5.0_RJ.mod"   ! to edit for each case
    required_termination_code_string = 'max_age'
 
+   write_profile_when_terminate = .TRUE.
+   filename_for_profile_when_terminate = '20.0_MJ_5.0_RJ.profile'
+
    set_initial_cumulative_energy_error = .true.
    new_cumulative_energy_error = 0d0
       
@@ -19,6 +22,10 @@
    ! save history of particular params
    history_columns_file = 'history_columns.list'
    profile_columns_file = 'profile_columns.list'
+
+   ! save pulsation data to input to GYRE later
+   save_pulse_data_when_terminate = .true.
+   save_pulse_data_filename = "20.0_MJ_5.0_RJ.mesa"
 
 / ! end of star_job namelist
 
@@ -41,6 +48,15 @@
 / ! end of atm namelist
 
 &controls
+   ! for GYRE later on
+   write_pulse_data_with_profile = .true.
+   pulse_data_format = 'GYRE'
+   ! adding these controls based on the GYRE example walkthrough spb star inlist ($GYRE_DIR/models/mesa/sbp/inlist_project)
+   add_center_point_to_pulse_data = .TRUE.
+   add_double_points_to_pulse_data = .TRUE.
+   threshold_grad_mu_for_double_point = 10.
+
+
    column_depth_for_irradiation = 300d0
    irradiation_flux = 5d4 ! erg/cm^2/s
    
