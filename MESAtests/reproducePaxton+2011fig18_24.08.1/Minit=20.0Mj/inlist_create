@@ -27,7 +27,9 @@
 / ! end of star_job namelist
 
 &eos
-   eosDT_file_prefix = 'mesa'
+   !eosDT_file_prefix = 'mesa'
+   use_CMS = .true.
+   max_Z_for_any_CMS = 0.04
 / ! end of eos namelist
 
 &kap
