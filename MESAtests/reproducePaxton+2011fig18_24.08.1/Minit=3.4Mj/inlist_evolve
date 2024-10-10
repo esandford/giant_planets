@@ -5,14 +5,14 @@
    show_log_description_at_start = .false.
 
    load_saved_model = .true.
-   load_model_filename ='planet_create_3.4_Mj_5.0_Rj.mod'
+   load_model_filename ='planet_create_3.4_Mj_1.5_Rj.mod'
 
    save_model_when_terminate = .true.
-   save_model_filename ='planet_evolve_3.4_Mj_5.0_Rj.mod'
+   save_model_filename ='planet_evolve_3.4_Mj_1.5_Rj.mod'
    required_termination_code_string = 'max_age'
 
    write_profile_when_terminate = .TRUE.
-   filename_for_profile_when_terminate ='3.4_Mj_5.0_Rj.profile'
+   filename_for_profile_when_terminate ='3.4_Mj_1.5_Rj.profile'
 
    set_initial_cumulative_energy_error = .true.
    new_cumulative_energy_error = 0d0
@@ -25,7 +25,7 @@
 
    ! save pulsation data to input to GYRE later
    save_pulse_data_when_terminate = .true.
-   save_pulse_data_filename ='3.4_Mj_5.0_Rj.mesa'
+   save_pulse_data_filename ='3.4_Mj_1.5_Rj.mesa'
 
 / ! end of star_job namelist
 

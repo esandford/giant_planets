@@ -5,18 +5,31 @@
    show_log_description_at_start = .false.
 
    save_model_when_terminate = .true.
-   save_model_filename ='planet_create_3.4_Mj_5.0_Rj.mod'
+   save_model_filename ='planet_create_3.4_Mj_1.5_Rj.mod'
    required_termination_code_string = 'max_age'
       
    ! new adiabatic, contracting initial model
    create_initial_model = .true.
    mass_in_gm_for_create_initial_model =6.45362d30
-   radius_in_cm_for_create_initial_model =3.5746d10
+   radius_in_cm_for_create_initial_model =1.07238d10
    initial_model_relax_num_steps =50
    max_tries_for_create_initial_model = 200
 
    set_initial_age = .true.
    initial_age = 0.d0 ! in years
+
+   ! initial composition
+   set_uniform_initial_composition = .true.
+   initial_h1 = 7.057d-1
+   initial_h2 = 2.781d-5
+   initial_he3 = 3.461d-5
+   initial_he4 = 2.769d-1
+   initial_zfracs = 3
+
+   ! include deuterium burning (results saved in LOGS_pp_extras). comment the below 3 lines out to get the results saved in LOGS_basic
+   change_net = .true.      
+   new_net_name = 'pp_extras.net'
+   show_net_species_info = .true.
       
    !pgstar_flag = .true.
 

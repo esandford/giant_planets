@@ -17,6 +17,19 @@
 
    set_initial_age = .true.
    initial_age = 0.d0 ! in years
+
+   ! initial composition
+   set_uniform_initial_composition = .true.
+   initial_h1 = 7.057d-1
+   initial_h2 = 2.781d-5
+   initial_he3 = 3.461d-5
+   initial_he4 = 2.769d-1
+   initial_zfracs = 3
+
+   ! include deuterium burning (results saved in LOGS_pp_extras). comment the below 3 lines out to get the results saved in LOGS_basic
+   change_net = .true.      
+   new_net_name = 'pp_extras.net'
+   show_net_species_info = .true.
       
    !pgstar_flag = .true.
 
