@@ -17,7 +17,74 @@ import mesa_helper as mh
 import os
 import shutil
 
-__all__ = ['MESAtable', 'SCVHtable', 'CMStable', 'boundary_mask_rhoT', 'boundary_mask_PT', 'finite_difference_dlrho_T', 'finite_difference_dlT_rho']
+__all__ = ['MESAtable', 'SCVHtable', 'CMStable', 'CEPAMtable', 'mazevet2022table','boundary_mask_rhoT', 'boundary_mask_PT', 'finite_difference_dlrho_T', 'finite_difference_dlT_rho']
+
+class CEPAMtable(object):
+    '''
+    For holding CEPAM EoS tables in grid form. 
+
+    Independent variables are logP[dyn cm^-2] = [erg cm^-3] and logT [K]
+    
+    Expected data file columns are: 
+
+    # [:,0] = log10P [erg cm^-3]
+    # [:,1] = log10T [K]
+    # [:,2] = log10rho [g cm-3]
+    # [:,3] = log10S [erg g^-1 K^-1]
+    '''
+
+    def __init__(self, filename, units, **kwargs):
+        self.filename = filename
+
+        if units == 'cms' or units == 'cgs' or units == 'CMS':
+            self.units = units
+        else: 
+            print('units must be cgs or mks or CMS (T [K], P [GPa], rho [g/cm^3], U [MJ/kg], S [MJ/kg/K])')
+
+        if filename.split("-")[-1] == 'H.csv':
+            self.X = 1.
+        elif filename.split("-")[-1] == 'He.csv':
+            self.X = 0.
+
+        self.Z = 0.
+        self.Y = 1. - self.X - self.Z
+
+        self.atomic_number = self.X + 2*(1.-self.X)
+        self.mass_number = self.X + 4*(1.-self.X)
+
+        self.eosData = np.genfromtxt(filename,skip_header=1,delimiter=',')
+        #swap P and T columns
+        self.eosData[:, [0, 1]] = self.eosData[:, [1, 0]]
+        # sort by T, then P
+        self.eosData = self.eosData[np.lexsort((self.eosData[:,1],self.eosData[:,0]))]
+
+        if self.units == 'CMS':
+            self.eosData[:,1] = self.eosData[:,1] - 10 # convert P to GPa
+            self.eosData[:,3] = self.eosData[:,3] - 10 # convert S to MJ kg^-1 K^-1
+
+        elif self.units == 'mks':
+            self.eosData[:,1] = self.eosData[:,1] - 1 # convert P to Pa
+            self.eosData[:,2] = self.eosData[:,2] + 3 # convert rho to kg m^-3
+            self.eosData[:,3] = self.eosData[:,3] - 4 # convert S to J kg^-1 K^-1
+        
+        self.independent_arr_1 = np.unique(self.eosData[:,0]) #unique T
+        self.independent_arr_2 = np.unique(self.eosData[:,1]) #unique P
+
+        self.independent_var_1 = 'T'
+        self.independent_var_2 = 'P'
+
+        nT = len(self.independent_arr_1)
+        nP = len(self.independent_arr_2)
+        
+        self.log10Tgrid, self.log10Pgrid = np.meshgrid(self.independent_arr_1, self.independent_arr_2)
+
+        self.log10rhogrid = np.zeros_like(self.log10Tgrid)
+        self.log10Sgrid = np.zeros_like(self.log10Tgrid)
+
+        for i in range(nT):
+            self.log10Pgrid[:,i] = self.eosData[:,1][i*nP : (i+1)*nP]
+            self.log10rhogrid[:,i] = self.eosData[:,2][i*nP : (i+1)*nP]
+            self.log10Sgrid[:,i] = self.eosData[:,3][i*nP : (i+1)*nP]
 
 class MESAtable(object):
     '''
@@ -46,15 +113,19 @@ class MESAtable(object):
     # [:,16]= eta [unitless] = ratio of electron chemical potential to kB*T
 
     '''
-    def __init__(self, filename, **kwargs):
+    def __init__(self, filename, units, **kwargs):
         self.filename = filename
+        if units == 'cms' or units == 'cgs' or units == 'CMS':
+            self.units = units
+        else: 
+            print('units must be cgs or mks or CMS (T [K], P [GPa], rho [g/cm^3], U [MJ/kg], S [MJ/kg/K])')
 
-        self.f_Z = float(filename.split('_')[-1].split('z')[0])/100.
-        self.f_H = float(filename.split('_')[-1].split('z')[1].split('x')[0])/100.
-        self.f_He = 1. - self.f_H - self.f_Z
+        self.Z = float(filename.split('_')[-1].split('z')[0])/100.
+        self.X = float(filename.split('_')[-1].split('z')[1].split('x')[0])/100.
+        self.Y = 1. - self.X - self.Z
 
-        self.Z = self.f_H + 2*(1.-self.f_H)
-        self.A = self.f_H + 4*(1.-self.f_H)
+        self.atomic_number = self.X + 2*(1.-self.X)
+        self.mass_number = self.X + 4*(1.-self.X)
         
         self.independent_var_1 = 'T'
         self.independent_var_2 = 'Q'
@@ -95,10 +166,23 @@ class MESAtable(object):
 
         q_ = np.array(q_)
         t_ = np.array(t_)
-        p_ = np.array(p_) - 10 #convert to GPa for easy comparison with CMS19 (and recall this is a logarithmic quantity)
+        p_ = np.array(p_)
         rho_ = np.array(rho_) 
-        s_ = np.array(s_) - 10 #convert to MJ kg^-1 K^-1 for easy comparison with CMS19 (and recall this is a logarithmic quantity)
-        u_ = np.array(u_) - 10 #convert to MJ kg^-1 for easy comparison with CMS19 (and recall this is a logarithmic quantity)
+        s_ = np.array(s_)
+        u_ = np.array(u_)
+
+        if self.units == 'CMS':
+            p_ = p_ - 10 #convert to GPa for easy comparison with CMS19 (and recall this is a logarithmic quantity)
+            s_ = s_ - 10 #convert to MJ kg^-1 K^-1 for easy comparison with CMS19 (and recall this is a logarithmic quantity)
+            u_ = u_ - 10 #convert to MJ kg^-1 for easy comparison with CMS19 (and recall this is a logarithmic quantity)
+
+        elif self.units == 'mks':
+            p_ = p_ - 1 # convert P to Pa
+            rho_ = rho_ + 3 # convert rho to kg m^-3
+            s_ = s_ - 4 # convert S to J kg^-1 K^-1
+            u_ = u_ - 4 # convert U to J kg^-1
+        
+
         dlrho_dlT_P_ = np.array(dlrho_dlT_P_)
         dlrho_dlP_T_ = np.array(dlrho_dlP_T_)
         dlS_dlT_P_ = np.array(dlS_dlT_P_)
@@ -136,58 +220,6 @@ class MESAtable(object):
             self.dlS_dlP_T_grid[:,i] = self.eosData[:,8][i*nQ : (i+1)*nQ]
             self.grad_ad_grid[:,i] = self.eosData[:,9][i*nQ : (i+1)*nQ]
         
-        '''
-        self.eosData = np.vstack((t_, p_, rho_, u_, s_, dlrho_dlT_P_, dlrho_dlP_T_, dlS_dlT_P_, dlS_dlP_T_, grad_ad_)).T
-        self.eosData = self.eosData[np.lexsort((self.eosData[:,2],self.eosData[:,0]))]
-        
-        self.independent_arr_1 = np.unique(t_) #unique T
-        self.independent_arr_2 = np.unique(rho_) #unique rho
-          
-        nT = len(self.independent_arr_1)
-        nRho = len(self.independent_arr_2)
-        
-        self.log10Tgrid, self.log10rhogrid = np.meshgrid(self.independent_arr_1, self.independent_arr_2)
-        
-        self.log10Ugrid = np.empty_like(self.log10Tgrid)
-        self.log10Sgrid = np.empty_like(self.log10Tgrid)
-        self.log10Pgrid = np.empty_like(self.log10Tgrid)
-        self.dlrho_dlT_P_grid = np.empty_like(self.log10Tgrid)
-        self.dlrho_dlP_T_grid = np.empty_like(self.log10Tgrid)
-        self.dlS_dlT_P_grid = np.empty_like(self.log10Tgrid)
-        self.dlS_dlP_T_grid = np.empty_like(self.log10Tgrid)
-        self.grad_ad_grid = np.empty_like(self.log10Tgrid)
-        
-        self.log10Ugrid[:] = np.nan
-        self.log10Sgrid[:] = np.nan
-        self.log10Pgrid[:] = np.nan
-        self.dlrho_dlT_P_grid[:] = np.nan
-        self.dlrho_dlP_T_grid[:] = np.nan
-        self.dlS_dlT_P_grid[:] = np.nan
-        self.dlS_dlP_T_grid[:] = np.nan
-        self.grad_ad_grid[:] = np.nan
-
-        nno = 0
-        nyes = 0
-
-        for ii, tt in enumerate(self.independent_arr_1):
-            for jj, rr in enumerate(self.independent_arr_2):
-                thisPairIdx = (self.eosData[:,0] == tt) & (self.eosData[:,2] == rr)
-
-                if len(self.eosData[thisPairIdx]) == 0:
-                    nno += 1
-                else:
-                    nyes+=1
-                    self.log10Pgrid[jj,ii] = self.eosData[thisPairIdx][0][1]
-                    self.log10Ugrid[jj,ii] = self.eosData[thisPairIdx][0][3]
-                    self.log10Sgrid[jj,ii] = self.eosData[thisPairIdx][0][4]
-                    self.dlrho_dlT_P_grid[jj,ii] = self.eosData[thisPairIdx][0][5]
-                    self.dlrho_dlP_T_grid[jj,ii] = self.eosData[thisPairIdx][0][6]
-                    self.dlS_dlT_P_grid[jj,ii] = self.eosData[thisPairIdx][0][7]
-                    self.dlS_dlP_T_grid[jj,ii] = self.eosData[thisPairIdx][0][8]
-                    self.grad_ad_grid[jj,ii] = self.eosData[thisPairIdx][0][9]
-
-        '''
-
 
 class SCVHtable(object):
     '''
@@ -206,24 +238,28 @@ class SCVHtable(object):
     # [:,10] = grad_ad = dlT/dlP_S
 
     '''
-    def __init__(self, filename, **kwargs):
+    def __init__(self, filename, units, **kwargs):
         self.filename = filename
+        if units == 'cms' or units == 'cgs' or units == 'CMS':
+            self.units = units
+        else: 
+            print('units must be cgs or mks or CMS (T [K], P [GPa], rho [g/cm^3], U [MJ/kg], S [MJ/kg/K])')
 
         if 'h_' in self.filename:
-            f_He = 0.
-            f_H = 1.
+            Y = 0.
+            X = 1.
             self.molecule = 'H2'
             self.atom = 'H'
         elif 'he_' in self.filename:
-            f_He = 1.
-            f_H = 0.
+            Y = 1.
+            X = 0.
             self.molecule = 'He'
             self.atom = 'He+'
             
-        self.f_H = f_H
-        self.f_He = f_He
-        self.Z = self.f_H + 2*(1.-self.f_H)
-        self.A = self.f_H + 4*(1.-self.f_H)
+        self.X = X
+        self.Y = Y
+        self.atomic_number = self.X + 2*(1.-self.X)
+        self.mass_number = self.X + 4*(1.-self.X)
 
         self.independent_var_1 = 'T'
         self.independent_var_2 = 'P'
@@ -283,23 +319,40 @@ class SCVHtable(object):
                             
                     
         t_ = np.array(t_)
-        p_ = np.array(p_) - 10 #convert to GPa for easy comparison with CMS19 (and recall this is a logarithmic quantity)
+        p_ = np.array(p_) 
         nm_ = np.array(nm_) 
         na_ = np.array(na_)
         rho_ = np.array(rho_) 
-        s_ = np.array(s_) - 10 #convert to MJ kg^-1 K^-1 for easy comparison with CMS19 (and recall this is a logarithmic quantity)
-        u_ = np.array(u_) - 10 #convert to MJ kg^-1 for easy comparison with CMS19 (and recall this is a logarithmic quantity)
+        s_ = np.array(s_)
+        u_ = np.array(u_)
         dlrho_dlT_P_ = np.array(dlrho_dlT_P_)
         dlrho_dlP_T_ = np.array(dlrho_dlP_T_)
         dlS_dlT_P_ = np.array(dlS_dlT_P_)
         dlS_dlP_T_ = np.array(dlS_dlP_T_)
         grad_ad_ = np.array(grad_ad_)
 
+        if self.units == 'CMS':
+            p_ = p_ - 10 #convert to GPa for easy comparison with CMS19 (and recall this is a logarithmic quantity)
+            s_ = s_ - 10 #convert to MJ kg^-1 K^-1 for easy comparison with CMS19 (and recall this is a logarithmic quantity)
+            u_ = u_ - 10 #convert to MJ kg^-1 for easy comparison with CMS19 (and recall this is a logarithmic quantity)
+
+        elif self.units == 'mks':
+            p_ = p_ - 1 # convert P to Pa
+            rho_ = rho_ + 3 # convert rho to kg m^-3
+            s_ = s_ - 4 # convert S to J kg^-1 K^-1
+            u_ = u_ - 4 # convert U to J kg^-1
+        
         self.eosData = np.vstack((t_, p_, rho_, u_, s_, dlrho_dlT_P_, dlrho_dlP_T_, dlS_dlT_P_, dlS_dlP_T_, grad_ad_, nm_, na_)).T
         
         self.independent_arr_1 = np.unique(self.eosData[:,0]) #unique T
-        self.independent_arr_2 = np.arange(4.0, 19.2, 0.2) - 10 #unique P, converted to GPa
-            
+
+        if self.units == 'CMS':
+            self.independent_arr_2 = np.arange(4.0, 19.2, 0.2) - 10 #unique P, converted to GPa
+        elif self.units=='mks':
+            self.independent_arr_2 = np.arange(4.0, 19.2, 0.2) - 1 # unique P, converted to Pa
+        elif self.units == 'cgs':
+            self.independent_arr_2 = np.arange(4.0, 19.2, 0.2)      #unique P, in erg cm^-3
+
         nT = len(self.independent_arr_1)
         nP = len(self.independent_arr_2)
 
@@ -343,26 +396,30 @@ class CMStable(object):
     # [:,9] = grad_ad = dlT/dlP_S    EoS quantity 7 given at each grid point
 
     '''
-    def __init__(self, filename, **kwargs):
+    def __init__(self, filename, units, **kwargs):
         self.filename = filename
+        if units == 'cms' or units == 'cgs' or units == 'CMS':
+            self.units = units
+        else: 
+            print('units must be cgs or mks or CMS (T [K], P [GPa], rho [g/cm^3], U [MJ/kg], S [MJ/kg/K])')
 
         if '_H_' in self.filename:
-            f_He = 0.
-            f_H = 1.
+            Y = 0.
+            X = 1.
         elif '_HE_' in self.filename:
-            f_He = 1.
-            f_H = 0.
+            Y = 1.
+            X = 0.
         elif '_HHE_' in self.filename:
-            f_He = self.filename.split('Y')[1].split('_')[0]
-            f_H = 1. - float(f_He)
+            Y = self.filename.split('Y')[1].split('_')[0]
+            X = 1. - float(Y)
         elif '_2021_' in self.filename:
-            f_He = "0.{0}".format(self.filename.split('Y0')[1].split('_')[0])
-            f_H = 1. - float(f_He)
+            Y = "0.{0}".format(self.filename.split('Y0')[1].split('_')[0])
+            X = 1. - float(Y)
 
-        self.f_H = f_H
-        self.f_He = f_He
-        self.Z = self.f_H + 2*(1.-self.f_H)
-        self.A = self.f_H + 4*(1.-self.f_H)
+        self.X = X
+        self.Y = Y
+        self.atomic_number = self.X + 2*(1.-self.X)
+        self.mass_number = self.X + 4*(1.-self.X)
 
         self.independent_var_1 = 'T'
 
@@ -396,6 +453,21 @@ class CMStable(object):
                 self.dlS_dlT_P_grid[:,i] = self.eosData[:,7][i*nrho : (i+1)*nrho]
                 self.dlS_dlP_T_grid[:,i] = self.eosData[:,8][i*nrho : (i+1)*nrho]
                 self.grad_ad_grid[:,i] = self.eosData[:,9][i*nrho : (i+1)*nrho]
+
+            if self.units == 'cgs':
+                self.log10Pgrid = self.log10Pgrid + 10. # convert GPa to erg g^-3
+                self.log10Ugrid = self.log10Ugrid + 10. # convert MJ kg^-1 to erg g^-1
+                self.log10Sgrid = self.log10Sgrid + 10. # convert MJ kg^-1 K^-1 to erg g^-1 K^-1
+
+            elif self.units == 'mks':
+                self.log10Pgrid = self.log10Pgrid + 9 # convert GPa to Pa
+                self.log10Ugrid = self.log10Ugrid + 6 # convert U to J kg^-1
+                self.log10Sgrid = self.log10Sgrid + 6 # convert S to J kg^-1 K^-1
+        
+
+
+            self.log10Qgrid = self.log10rhogrid - 2.*self.log10Tgrid + 12
+
             
         elif '_TP_' in self.filename:
             self.independent_var_2 = 'P'
@@ -426,18 +498,106 @@ class CMStable(object):
                 self.dlS_dlP_T_grid[:,i] = self.eosData[:,8][i*nP : (i+1)*nP]
                 self.grad_ad_grid[:,i] = self.eosData[:,9][i*nP : (i+1)*nP]
 
-        
-        #allowed_keys = ["log10T_grid","log10P_grid","log10rho_grid","log10U_grid","log10S_grid","dlrho_dlT_P_grid","dlrho_dlP_T_grid","dlS_dlT_P_grid","dlS_dlP_T_grid","grad_ad_grid"]
-        
-        #self.__dict__.update((k,v) for k,v in kwargs.items() if k in allowed_keys)
+            if self.units == 'cgs':
+                self.independent_arr_2 = self.independent_arr_2 + 10.
+                self.log10Pgrid = self.log10Pgrid + 10.
+                self.log10Ugrid = self.log10Ugrid + 10.
+                self.log10Sgrid = self.log10Sgrid + 10.
 
+        self.chiRho = None # finite diff quantity 1, aka dlP_dlrho_T
+        self.dlS_dlrho_T = None # finite diff quantity 3
+        self.dlE_dlrho_T = None
+
+        self.chiT = None # finite diff quantity 2, aka dlP_dlT_rho
+        self.dlS_dlT_rho = None # finite diff quantity 4
+
+        self.Cp = None
+        self.Cv = None
+
+        self.dE_drho_T = None
+        self.dS_dT_rho = None
+        self.dS_drho_T = None
+        self.dE_drho_T_direct = None
+        self.dS_dT_rho_direct = None
+        self.dS_drho_T_direct = None
+        self.mu = None
+        self.log_free_e = None
+        self.gamma1 = None
+        self.gamma3 = None
+        self.grad_ad = None
+        self.eta = None
+
+
+class mazevet2022table(object):
+    # expected columns:  
+    # [:,0] = T [K] 
+    # [:,1] = rho [g cm^-3]
+    # [:,2] = P [GPa] 
+    # [:,3] = E [eV amu^-1]
+    # [:,4] = S [MJ kg^-1 K^-1]
+    def __init__(self, filename, units, **kwargs):
+        self.filename = filename
+        if units == 'cms' or units == 'cgs' or units == 'CMS':
+            self.units = units
+        else: 
+            print('units must be cgs or mks or CMS (T [K], P [GPa], rho [g/cm^3], U [MJ/kg], S [MJ/kg/K])')
+
+        self.X = 1.
+        self.Y = 0.
+        
+        self.atomic_number = self.X + 2*(1.-self.X)
+        self.mass_number = self.X + 4*(1.-self.X)
+
+        self.independent_var_1 = 'T'
+        self.independent_var_2 = 'rho'
+
+        eosdata = np.genfromtxt(filename,skip_header=10)
+        # convert energy to MJ kg^-1
+        eosdata[:,3] = eosdata[:,3] * 1.602e-19 * 1.e-6 * (1./(1.66054e-27))
+        # swap order of rho, P columns to match CMS table format
+        i, j = 1,2
+        eosdata.T[[i, j]] = eosdata.T[[j, i]]
+        # take log10
+        eosdata = np.log10(eosdata)
+
+        self.eosData = eosdata
+        
+        self.independent_arr_1 = np.unique(self.eosData[:,0]) # unique T
+        self.independent_arr_2 = np.unique(self.eosData[:,2]) # unique rho
+
+        nT = len(self.independent_arr_1)
+        nrho = len(self.independent_arr_2)
+            
+        self.log10Tgrid, self.log10rhogrid = np.meshgrid(self.independent_arr_1, self.independent_arr_2)
+        self.log10Ugrid = np.zeros_like(self.log10Tgrid)
+        self.log10Sgrid = np.zeros_like(self.log10Tgrid)
+        self.log10Pgrid = np.zeros_like(self.log10Tgrid)
+        
+        for i in range(nT):
+            self.log10Pgrid[:,i] = self.eosData[:,1][i*nrho : (i+1)*nrho]
+            self.log10Ugrid[:,i] = self.eosData[:,3][i*nrho : (i+1)*nrho]                
+            self.log10Sgrid[:,i] = self.eosData[:,4][i*nrho : (i+1)*nrho]
+
+        if self.units == 'cgs':
+            self.log10Pgrid = self.log10Pgrid + 10
+            self.log10Ugrid = self.log10Ugrid + 10
+            self.log10Sgrid = self.log10Sgrid + 10
+
+        elif self.units == 'mks':
+            self.log10Pgrid = self.log10Pgrid - 1 # convert P to Pa
+            self.log10rhogrid = self.log10rhogrid + 3 # convert rho to kg m^-3
+            self.log10Sgrid = self.log10Sgrid - 4 # convert S to J kg^-1 K^-1
+            self.log10Ugrid = self.log10Ugrid - 4 # convert U to J kg^-1
+        
+
+            
 def boundary_mask_rhoT(CMStable):
     """
     Return a mask of shape log10Tgrid that sets all values below the "allowed" line to nan
     """
 
     # chabrier+2019 eq 3, limit of validity of EoS
-    boundary = 3.3 + 0.5*CMStable.log10rhogrid + np.log10(CMStable.Z) - (5./3)*np.log10(CMStable.A)
+    boundary = 3.3 + 0.5*CMStable.log10rhogrid + np.log10(CMStable.atomic_number) - (5./3)*np.log10(CMStable.mass_number)
     mask = (CMStable.log10Tgrid < boundary)
     
     return mask
