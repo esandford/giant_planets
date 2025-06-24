@@ -8,12 +8,14 @@ import matplotlib as mpl
 
 mpl.style.use('classic')
 
+import astropy
 from astropy.table import Table
 from astropy import units as u
 from astropy.constants import G
 
-from scipy.optimize import fsolve
+from scipy.optimize import fsolve, root
 from scipy.special import erfi
+import cmath
 
 
 pp_extras_species = ['h1', 'h2', 'he3', 'he4', 'li7', 'be7', 'b8', 'c12', 'n14', 'o16', 'ne20', 'mg24']
@@ -52,14 +54,18 @@ def total_metal_mass(zone_z, zone_dm):
 def generate_uniform_profile(q, dm, mz=None, zc=None, zatm=None, species=pp_extras_species, protosolar_mass_fractions=pp_extras_protosolar_mass_fractions):
     m_planet = np.sum(np.array(dm)) * u.g
 
-    if mz is None and zc != zatm:
-        raise Exception("uniform profile must have zc = zatm")
-
-    if mz is None:
+    if mz is None and zatm is None:
         zs = zc * np.ones_like(np.array(q))
+    elif mz is None and zc is None:
+        zs = zatm * np.ones_like(np.array(q))
+    elif zc is None and zatm is None:
+        zs = (mz/m_planet).to(u.dimensionless_unscaled) * np.ones_like(np.array(q))
     else:
-        zs = (mz.to(u.g)/m_planet) * np.ones_like(np.array(q))
+        raise Exception("profile overdetermined")
 
+    if mz < 0 or zc < 0 or zatm < 0:
+        raise Exception("unphysical combination: mz={0}, zc={1}, zatm={2}".format(mz,zc,zatm))
+    
     return zs         
 
 def generate_linear_profile(q, dm, mz=None, zc=None, zatm=None, species=pp_extras_species, protosolar_mass_fractions=pp_extras_protosolar_mass_fractions):
@@ -68,17 +74,26 @@ def generate_linear_profile(q, dm, mz=None, zc=None, zatm=None, species=pp_extra
     if mz is None:
         mz = 0.5*(zc + zatm)*m_planet
     elif zatm is None:
-        zatm = 2*(mz/m_planet).value - zc
+        zatm = 2*(mz/m_planet).to(u.dimensionless_unscaled).value - zc
     elif zc is None:
-        zc = 2*(mz/m_planet).value - zatm
+        zc = 2*(mz/m_planet).to(u.dimensionless_unscaled).value - zatm
 
-    zs = zc - (zc - zatm)*np.array(q)
+    if mz < 0 or zc < 0 or zatm < 0:
+        raise Exception("unphysical combination: mz={0}, zc={1}, zatm={2}".format(mz,zc,zatm))
+    
+    zs = zc + (zatm - zc)*np.array(q)
     return zs
 
 
 def exponential_solve_for_zc(zc, *other_req_args):
     # other required args are mratio = mz/m_planet, zatm
     mratio, zatm = other_req_args
+    '''
+    plotx = np.linspace(0,1,100)
+    fig, ax = plt.subplots(1,1,figsize=(8,6))
+    ax.plot(plotx, (1./np.log(zatm/plotx))*(zatm - plotx) - mratio, 'k-')
+    plt.show()
+    '''
     return (1./np.log(zatm/zc))*(zatm - zc) - mratio
 
 def exponential_solve_for_zatm(zatm, *other_req_args):
@@ -92,26 +107,39 @@ def generate_exponential_profile(q, dm, mz=None, zc=None, zatm=None, species=pp_
     if mz is None:
         mz = m_planet * (1./np.log(zatm/zc)) * (zatm - zc)
     elif zc is None:
+        mratio = (mz/m_planet).to(u.dimensionless_unscaled).value
         other_req_args = (mratio, zatm)
-        zc = fsolve(exponential_solve_for_zc, 0.1, args=other_req_args)[0]
+        zc = fsolve(exponential_solve_for_zc, 0.01, args=other_req_args)[0]
     elif zatm is None:
+        mratio = (mz/m_planet).to(u.dimensionless_unscaled).value
         other_req_args = (mratio, zc)
-        zatm = fsolve(exponential_solve_for_zatm, 0.1, args=other_req_args)[0]
+        zatm = fsolve(exponential_solve_for_zatm, 0.01, args=other_req_args)[0]
     
-    b = -np.log(zatm/zc)
-    zs = zc * np.exp(-b*np.array(q))
+    if mz < 0 or zc < 0 or zatm < 0:
+        raise Exception("unphysical combination: mz={0}, zc={1}, zatm={2}".format(mz,zc,zatm))
+    
+    b = np.log(zatm/zc)
+    zs = zc * np.exp(b*np.array(q))
     
     return zs
 
 def gaussian_solve_for_zc(zc, *other_req_args):
     # other required args are mratio = mz/m_planet, zatm
     mratio, zatm = other_req_args
-    return zc * ((np.sqrt(np.pi) * erfi(np.sqrt(np.log(zatm/zc))))/(2*np.sqrt(np.log(zatm/zc)))) - mratio
+    if np.log(zatm/zc) < 0:
+        result =  zc * ((np.sqrt(np.pi) * erfi(cmath.sqrt(np.log(zatm/zc))))/(2*cmath.sqrt(np.log(zatm/zc)))) - mratio
+        return result.real
+    else:
+        return zc * ((np.sqrt(np.pi) * erfi(np.sqrt(np.log(zatm/zc))))/(2*np.sqrt(np.log(zatm/zc)))) - mratio
 
 def gaussian_solve_for_zatm(zatm, *other_req_args):
     # other required args are mratio = mz/m_planet, zc
     mratio, zc = other_req_args
-    return zc * ((np.sqrt(np.pi) * erfi(np.sqrt(np.log(zatm/zc))))/(2*np.sqrt(np.log(zatm/zc)))) - mratio
+    if np.log(zatm/zc) < 0:
+        result =  zc * ((np.sqrt(np.pi) * erfi(cmath.sqrt(np.log(zatm/zc))))/(2*cmath.sqrt(np.log(zatm/zc)))) - mratio
+        return result.real
+    else:
+        return zc * ((np.sqrt(np.pi) * erfi(np.sqrt(np.log(zatm/zc))))/(2*np.sqrt(np.log(zatm/zc)))) - mratio
 
 def generate_gaussian_profile(q, dm, mz=None, zc=None, zatm=None, species=pp_extras_species, protosolar_mass_fractions=pp_extras_protosolar_mass_fractions):
     m_planet = np.sum(np.array(dm)) * u.g
@@ -119,15 +147,19 @@ def generate_gaussian_profile(q, dm, mz=None, zc=None, zatm=None, species=pp_ext
     if mz is None:
         mz = m_planet * zc * ((np.sqrt(np.pi) * erfi(np.sqrt(np.log(zatm/zc))))/(2*np.sqrt(np.log(zatm/zc))))
     elif zc is None:
+        mratio = (mz/m_planet).to(u.dimensionless_unscaled).value
         other_req_args = (mratio, zatm)
-        zc = fsolve(gaussian_solve_for_zc, 0.1, args=other_req_args)[0]
+        zc = fsolve(gaussian_solve_for_zc, 0.01, args=other_req_args)[0]
     elif zatm is None:
+        mratio = (mz/m_planet).to(u.dimensionless_unscaled).value
         other_req_args = (mratio, zc)
-        zatm = fsolve(gaussian_solve_for_zatm, 0.1, args=other_req_args)[0]
+        zatm = fsolve(gaussian_solve_for_zatm, 0.01, args=other_req_args)[0]
     
-
-    b = -np.log(zatm/zc)
-    zs = zc * np.exp(-b*np.array(q)**2)
+    if mz < 0 or zc < 0 or zatm < 0:
+        raise Exception("unphysical combination: mz={0}, zc={1}, zatm={2}".format(mz,zc,zatm))
+    
+    b = np.log(zatm/zc)
+    zs = zc * np.exp(b*np.array(q)**2)
     
     return zs
 
@@ -138,11 +170,14 @@ def generate_core_uniform_profile(q, dm, mz=None, zc=None, zatm=None, q1=None, s
     if mz is None:
         mz = m_planet * (zc*q1 + zatm*(1-q1))
     elif zc is None:
-        zc = (1/q1) * ((mz/m_planet) - zatm*(1-q1))
+        zc = (1/q1) * ((mz/m_planet).to(u.dimensionless_unscaled) - zatm*(1-q1))
     elif zatm is None:
-        zatm = (1/(1-q1)) * ((mz/m_planet) - zc*q1)
+        zatm = (1/(1-q1)) * ((mz/m_planet).to(u.dimensionless_unscaled) - zc*q1)
     elif q1 is None:
-        q1 = ((mz/m_planet) - zatm)/(zc - zatm)
+        q1 = ((mz/m_planet).to(u.dimensionless_unscaled) - zatm)/(zc - zatm)
+
+    if mz < 0 or zc < 0 or zatm < 0 or q1 < 0:
+        raise Exception("unphysical combination: mz={0}, zc={1}, zatm={2}, q1={3}".format(mz,zc,zatm,q1))
     
     zs = zc*np.ones_like(np.array(q))
     zs[q > q1] = zatm
@@ -155,12 +190,15 @@ def generate_core_linear_profile(q, dm, mz=None, zc=None, zatm=None, q1=None, sp
     if mz is None:
         mz = m_planet * (zc*q1 + zatm*(1-q1) + 0.5*(1-q1)*(zc - zatm))
     elif zc is None:
-        zc = (1/(1+q1)) * (2*(mz/m_planet) - zatm*(1-q1))
+        zc = (1/(1+q1)) * (2*(mz/m_planet).to(u.dimensionless_unscaled) - zatm*(1-q1))
     elif zatm is None:
-        zatm = (1/(1-q1)) * (2*(mz/m_planet) - zc*(1+q1))
+        zatm = (1/(1-q1)) * (2*(mz/m_planet).to(u.dimensionless_unscaled) - zc*(1+q1))
     elif q1 is None:
-        q1 = (1/(zc-zatm)) * (2*(mz/m_planet) - zc - zatm)
+        q1 = (1/(zc-zatm)) * (2*(mz/m_planet).to(u.dimensionless_unscaled) - zc - zatm)
 
+    if mz < 0 or zc < 0 or zatm < 0 or q1 < 0:
+        raise Exception("unphysical combination: mz={0}, zc={1}, zatm={2}, q1={3}".format(mz,zc,zatm,q1))
+    
     zs = zc*np.ones_like(np.array(q))
     zs[q > q1] = zc + ((zatm-zc)/(1-q1))*(np.array(q)[q > q1] - q1)
 
@@ -169,37 +207,44 @@ def generate_core_linear_profile(q, dm, mz=None, zc=None, zatm=None, q1=None, sp
 def core_exponential_solve_for_zc(zc, *other_req_args):
     # other required args are mratio = mz/m_planet, zatm, q1
     mratio, zatm, q1 = other_req_args
-    return zc*q1 + (((zc*np.log(zatm/zc))/(1-q1))*(np.exp(((1-q1)**2)/np.log(zatm/zc)) - 1)) - mratio
+    return zc*q1 + ((1-q1)/np.log(zatm/zc))*(zatm-zc) - mratio
 
 def core_exponential_solve_for_zatm(zatm, *other_req_args):
     # other required args are mratio = mz/m_planet, zc, q1
     mratio, zc, q1 = other_req_args
-    return zc*q1 + (((zc*np.log(zatm/zc))/(1-q1))*(np.exp(((1-q1)**2)/np.log(zatm/zc)) - 1)) - mratio
+    return zc*q1 + ((1-q1)/np.log(zatm/zc))*(zatm-zc) - mratio
 
 def core_exponential_solve_for_q1(q1, *other_req_args):
     # other required args are mratio = mz/m_planet, zc, zatm
     mratio, zc, zatm = other_req_args
-    return zc*q1 + (((zc*np.log(zatm/zc))/(1-q1))*(np.exp(((1-q1)**2)/np.log(zatm/zc)) - 1)) - mratio
+    return zc*q1 + ((1-q1)/np.log(zatm/zc))*(zatm-zc) - mratio
 
 def generate_core_exponential_profile(q, dm, mz=None, zc=None, zatm=None, q1=None, species=pp_extras_species, protosolar_mass_fractions=pp_extras_protosolar_mass_fractions):
     m_planet = np.sum(np.array(dm)) * u.g
 
     if mz is None:
-        mz = m_planet * (zc*q1 + ((zc*np.log(zatm/zc))/(1-q1))*(np.exp(((1-q1)**2)/np.log(zatm/zc)) - 1))
+        mz = m_planet * (zc*q1 + ((1-q1)/np.log(zatm/zc))*(zatm-zc))
     elif zc is None:
+        mratio = (mz/m_planet).to(u.dimensionless_unscaled).value
         other_req_args = (mratio, zatm, q1)
-        zc = fsolve(core_exponential_solve_for_zc, 0.1, args=other_req_args)[0]
+        zc = fsolve(core_exponential_solve_for_zc, 0.01, args=other_req_args)[0]
     elif zatm is None:
+        mratio = (mz/m_planet).to(u.dimensionless_unscaled).value
         other_req_args = (mratio, zc, q1)
-        zatm = fsolve(core_exponential_solve_for_zatm, 0.1, args=other_req_args)[0]
+        zatm = fsolve(core_exponential_solve_for_zatm, 0.01, args=other_req_args)[0]
     elif q1 is None:
+        mratio = (mz/m_planet).to(u.dimensionless_unscaled).value
         other_req_args = (mratio, zc, zatm)
         q1 = fsolve(core_exponential_solve_for_q1, 0.1, args=other_req_args)[0]
     
-    b = (q1 - 1)/np.log(zatm/zc)
+    if mz < 0 or zc < 0 or zatm < 0 or q1 < 0:
+        raise Exception("unphysical combination: mz={0}, zc={1}, zatm={2}, q1={3}".format(mz,zc,zatm,q1))
+    
+    #print("mz is {0}".format(mz.to(u.earthMass)))
+    b = np.log(zatm/zc)/(1-q1)
 
     zs = zc*np.ones_like(np.array(q))
-    zs[q > q1] = zc*np.exp(-b * (np.array(q)[q > q1] - q1))
+    zs[q > q1] = zc*np.exp(b * (np.array(q)[q > q1] - q1))
 
     return zs
 
@@ -207,42 +252,64 @@ def generate_core_exponential_profile(q, dm, mz=None, zc=None, zatm=None, q1=Non
 def core_gaussian_solve_for_zc(zc, *other_req_args):
     # other required args are mratio = mz/m_planet, zatm, q1
     mratio, zatm, q1 = other_req_args
-    return zc*q1 + zc * (((1-q1)*np.sqrt(np.pi) * erfi(np.sqrt(np.log(zatm/zc))))/(2*np.sqrt(np.log(zatm/zc)))) - mratio
+    if np.log(zatm/zc) < 0:
+        result =  zc*q1 + zc * (((1-q1)*np.sqrt(np.pi) * erfi(cmath.sqrt(np.log(zatm/zc))))/(2*cmath.sqrt(np.log(zatm/zc)))) - mratio
+        return result.real
+    else:
+        return zc*q1 + zc * (((1-q1)*np.sqrt(np.pi) * erfi(np.sqrt(np.log(zatm/zc))))/(2*np.sqrt(np.log(zatm/zc)))) - mratio
 
 def core_gaussian_solve_for_zatm(zatm, *other_req_args):
     # other required args are mratio = mz/m_planet, zc, q1
     mratio, zc, q1 = other_req_args
-    return zc*q1 + zc * (((1-q1)*np.sqrt(np.pi) * erfi(np.sqrt(np.log(zatm/zc))))/(2*np.sqrt(np.log(zatm/zc)))) - mratio
+    if np.log(zatm/zc) < 0:
+        result =  zc*q1 + zc * (((1-q1)*np.sqrt(np.pi) * erfi(cmath.sqrt(np.log(zatm/zc))))/(2*cmath.sqrt(np.log(zatm/zc)))) - mratio
+        return result.real
+    else:
+        return zc*q1 + zc * (((1-q1)*np.sqrt(np.pi) * erfi(np.sqrt(np.log(zatm/zc))))/(2*np.sqrt(np.log(zatm/zc)))) - mratio
 
 def core_gaussian_solve_for_q1(q1, *other_req_args):
     # other required args are mratio = mz/m_planet, zc, zatm
     mratio, zc, zatm = other_req_args
-    return zc*q1 + zc * (((1-q1)*np.sqrt(np.pi) * erfi(np.sqrt(np.log(zatm/zc))))/(2*np.sqrt(np.log(zatm/zc)))) - mratio
+    if np.log(zatm/zc) < 0:
+        result =  zc*q1 + zc * (((1-q1)*np.sqrt(np.pi) * erfi(cmath.sqrt(np.log(zatm/zc))))/(2*cmath.sqrt(np.log(zatm/zc)))) - mratio
+        return result.real
+    else:
+        return zc*q1 + zc * (((1-q1)*np.sqrt(np.pi) * erfi(np.sqrt(np.log(zatm/zc))))/(2*np.sqrt(np.log(zatm/zc)))) - mratio
 
 def generate_core_gaussian_profile(q, dm, mz=None, zc=None, zatm=None, q1=None, species=pp_extras_species, protosolar_mass_fractions=pp_extras_protosolar_mass_fractions):
     m_planet = np.sum(np.array(dm)) * u.g
 
     if mz is None:
-        mz = m_planet * (zc*q1 + zc * (((1-q1)*np.sqrt(np.pi) * erfi(np.sqrt(np.log(zatm/zc))))/(2*np.sqrt(np.log(zatm/zc)))))
-
+        if np.log(zatm/zc) < 0:
+            mz = m_planet * (zc*q1 + zc * (((1-q1)*np.sqrt(np.pi) * erfi(cmath.sqrt(np.log(zatm/zc))))/(2*cmath.sqrt(np.log(zatm/zc)))))
+            mz = mz.real
+        else:
+            mz = m_planet * (zc*q1 + zc * (((1-q1)*np.sqrt(np.pi) * erfi(np.sqrt(np.log(zatm/zc))))/(2*np.sqrt(np.log(zatm/zc)))))
     elif zc is None:
+        mratio = (mz/m_planet).to(u.dimensionless_unscaled).value
         other_req_args = (mratio, zatm, q1)
-        zc = fsolve(core_gaussian_solve_for_zc, 0.1, args=other_req_args)[0]
+        zc = fsolve(core_gaussian_solve_for_zc, 0.01, args=other_req_args)[0]
     elif zatm is None:
+        mratio = (mz/m_planet).to(u.dimensionless_unscaled).value
         other_req_args = (mratio, zc, q1)
-        zatm = fsolve(core_gaussian_solve_for_zatm, 0.1, args=other_req_args)[0]
+        zatm = fsolve(core_gaussian_solve_for_zatm, 0.01, args=other_req_args)[0]
     elif q1 is None:
+        mratio = (mz/m_planet).to(u.dimensionless_unscaled).value
         other_req_args = (mratio, zc, zatm)
         q1 = fsolve(core_gaussian_solve_for_q1, 0.1, args=other_req_args)[0]
     
-    b = np.log(zc/zatm)/((1-q1)**2)
+    if mz < 0 or zc < 0 or zatm < 0 or q1 < 0:
+        raise Exception("unphysical combination: mz={0}, zc={1}, zatm={2}, q1={3}".format(mz,zc,zatm,q1))
+    
+    print("mz is {0}".format(mz.to(u.earthMass)))
+    b = np.log(zatm/zc)/((1-q1)**2)
 
     zs = zc*np.ones_like(np.array(q))
-    zs[q > q1] = zc*np.exp(-b * (np.array(q)[q > q1] - q1)**2)
+    zs[q > q1] = zc*np.exp(b * (np.array(q)[q > q1] - q1)**2)
 
     return zs
 
-def generate_profile(q, dm, form='uniform', zatm=protosolar_Z, stdev=None, mz=60*u.earthMass, species=pp_extras_species, protosolar_mass_fractions=pp_extras_protosolar_mass_fractions):
+def generate_profile(q, dm, form='uniform', mz=None, zc=None, zatm=None, q1=None, species=pp_extras_species, protosolar_mass_fractions=pp_extras_protosolar_mass_fractions):
     if form == 'uniform':
         zs = generate_uniform_profile(q, dm, mz=mz, zc=zc, zatm=zatm, species=species, protosolar_mass_fractions=protosolar_mass_fractions)
     elif form == 'linear':
@@ -325,6 +392,7 @@ parser.add_argument("functional_form", type=str, choices=["uniform", "linear", "
 parser.add_argument("outfile_name", type=str, help="save file name of generated composition profile")
 # optional arguments
 parser.add_argument("-mz", "--mz", type=float, help="total metal mass")
+parser.add_argument("-mzunits", "--mzunits", type=astropy.units.core.Unit, help="units of total metal mass. defaults to earth masses if not specified")
 parser.add_argument("-zc", "--zc", type=float, help="Z at center of planet")
 parser.add_argument("-zatm", "--zatm", type=float, help="Z at outside of planet")
 parser.add_argument("-q1", "--q1", type=float, help="exterior boundary of core in units of m/Mtot; necessary for any of the 'core_' profiles; must be between 0 and 1")
@@ -350,10 +418,22 @@ if "core_" in args.functional_form:
 else:
     num_none_args = sum(x is None for x in [args.mz, args.zc, args.zatm])
 
-if num_none_args > 1:
+if num_none_args > 1 and args.functional_form != "uniform" and args.functional_form != "core_uniform":
     raise Exception("not enough information to calculate profile!")
 
-generate_and_save_profile(mesa_profile, form=args.functional_form, savefilename=args.outfile_name, fortran_format=fortran_format, mz=args.mz, zc=args.zc, zatm=args.zatm, q1=args.q1, species=pp_extras_species, protosolar_mass_fractions=pp_extras_protosolar_mass_fractions)
+# handle metal mass units. other args (zc, zatm, q1) are all dimensionless, so don't require handling
+if args.mz:
+    if args.mzunits:
+        mz_in = args.mz * args.mzunits
+    else:
+        mz_in = args.mz * u.earthMass
+else:
+    mz_in = None
+
+print("desired total metal mass is: {0}".format(mz_in))
+#print(type(mz_in))
+
+generate_and_save_profile(mesa_profile, form=args.functional_form, savefilename=args.outfile_name, fortran_format=fortran_format, mz=mz_in, zc=args.zc, zatm=args.zatm, q1=args.q1, species=pp_extras_species, protosolar_mass_fractions=pp_extras_protosolar_mass_fractions)
 
 
 
