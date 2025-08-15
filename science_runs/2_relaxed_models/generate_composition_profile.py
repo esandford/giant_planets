@@ -55,17 +55,22 @@ def generate_uniform_profile(q, dm, mz=None, zc=None, zatm=None, species=pp_extr
     m_planet = np.sum(np.array(dm)) * u.g
 
     if mz is None and zatm is None:
-        zs = zc * np.ones_like(np.array(q))
+        zatm = zc
+        mz = m_planet.to(u.earthMass) * zc
     elif mz is None and zc is None:
-        zs = zatm * np.ones_like(np.array(q))
+        zc = zatm
+        mz = m_planet.to(u.earthMass) * zc
     elif zc is None and zatm is None:
-        zs = (mz/m_planet).to(u.dimensionless_unscaled) * np.ones_like(np.array(q))
+        zc = (mz/m_planet).to(u.dimensionless_unscaled)
+        zatm = zc
     else:
         raise Exception("profile overdetermined")
 
     if mz < 0 or zc < 0 or zatm < 0:
         raise Exception("unphysical combination: mz={0}, zc={1}, zatm={2}".format(mz,zc,zatm))
     
+    zs = zc * np.ones_like(np.array(q))
+
     return zs         
 
 def generate_linear_profile(q, dm, mz=None, zc=None, zatm=None, species=pp_extras_species, protosolar_mass_fractions=pp_extras_protosolar_mass_fractions):
@@ -160,6 +165,26 @@ def generate_gaussian_profile(q, dm, mz=None, zc=None, zatm=None, species=pp_ext
     
     b = np.log(zatm/zc)
     zs = zc * np.exp(b*np.array(q)**2)
+    
+    return zs
+
+
+def generate_inert_core_profile(q, dm, mz=None, zc=None, zatm=None, q1=None, species=pp_extras_species, protosolar_mass_fractions=pp_extras_protosolar_mass_fractions):
+    m_planet = np.sum(np.array(dm)) * u.g
+
+    zatm = 0
+    zc = 1
+
+    if mz is None:
+        mz = m_planet * (zc*q1 + zatm*(1-q1))
+    elif q1 is None:
+        q1 = ((mz/m_planet).to(u.dimensionless_unscaled) - zatm)/(zc - zatm)
+
+    if mz < 0 or zc < 0 or zatm < 0 or q1 < 0:
+        raise Exception("unphysical combination: mz={0}, zc={1}, zatm={2}, q1={3}".format(mz,zc,zatm,q1))
+    
+    zs = zc*np.ones_like(np.array(q))
+    zs[q > q1] = 0
     
     return zs
 
@@ -318,6 +343,8 @@ def generate_profile(q, dm, form='uniform', mz=None, zc=None, zatm=None, q1=None
         zs = generate_exponential_profile(q, dm, mz=mz, zc=zc, zatm=zatm, species=species, protosolar_mass_fractions=protosolar_mass_fractions)
     elif form == 'gaussian':
         zs = generate_gaussian_profile(q, dm, mz=mz, zc=zc, zatm=zatm, species=species, protosolar_mass_fractions=protosolar_mass_fractions)
+    elif form == 'inert_core':
+        zs = generate_inert_core_profile(q, dm, mz=mz, zc=zc, zatm=zatm, q1=q1, species=species, protosolar_mass_fractions=protosolar_mass_fractions)
     elif form == 'core_uniform':
         zs = generate_core_uniform_profile(q, dm, mz=mz, zc=zc, zatm=zatm, q1=q1, species=species, protosolar_mass_fractions=protosolar_mass_fractions)
     elif form == 'core_linear':
@@ -330,7 +357,7 @@ def generate_profile(q, dm, form='uniform', mz=None, zc=None, zatm=None, q1=None
     return zs
 
 
-def generate_and_save_profile(profile_table, form='uniform', savefilename="./composition.dat", fortran_format=False, mz=None, zc=None, zatm=None, q1=None, species=pp_extras_species, protosolar_mass_fractions=pp_extras_protosolar_mass_fractions):
+def generate_and_save_composition_profile(profile_table, form='uniform', savefilename="./composition.dat", fortran_format=False, mz=None, zc=None, zatm=None, q1=None, species=pp_extras_species, protosolar_mass_fractions=pp_extras_protosolar_mass_fractions):
     '''
     arguments:
     profile_table = a MESA profile in astropy table format
@@ -372,6 +399,42 @@ def generate_and_save_profile(profile_table, form='uniform', savefilename="./com
                
     return
 
+
+def generate_and_save_entropy_profile(profile_table, savefilename="./entropy.dat", specific_entropy=8.0, fortran_format=False):
+    '''
+    arguments:
+    profile_table = a MESA profile in astropy table format
+    '''
+
+    # MESA desired unit of specific entropy is erg K^-1 g^-1
+    # input unit of specific entropy is kB/baryon = kB/amu 
+    # below numerical conversion factors come from MESA const_def.f90
+    amu = (1./6.02214076e23) #g
+    kB = 1.380649e-16        #erg K^-1
+    
+    s_arr = specific_entropy*(kB/amu)*np.ones_like(profile_table['q'])
+
+    nzones = len(profile_table['q'])
+    nspecies = len(pp_extras_species)
+
+    header = '        {0}'.format(nzones)
+
+    entropy = np.zeros((nzones, 2))
+    entropy[:,0] = np.array(profile_table['xq'])
+    entropy[:,1] = s_arr
+
+    np.savetxt(savefilename, entropy, delimiter='  ',newline='\n  ', header=header, comments='')
+
+    if fortran_format is True:
+        with open(savefilename, 'r') as f:
+            filedata = f.read()
+        filedata = filedata.replace('e','D')
+        with open(savefilename, 'w') as f:
+            f.write(filedata)
+               
+    return
+
+
 """
 
 mesa_profile_filename = sys.argv[1]
@@ -388,8 +451,10 @@ composition_profile_savefile = sys.argv[5]
 parser = argparse.ArgumentParser()
 # required positional arguments
 parser.add_argument("profile_name", type=str, help="name of MESA profile to read in mass profile from")
-parser.add_argument("functional_form", type=str, choices=["uniform", "linear", "exponential", "gaussian", "core_uniform", "core_linear", "core_exponential", "core_gaussian"], help="desired functional form of composition profile")
-parser.add_argument("outfile_name", type=str, help="save file name of generated composition profile")
+parser.add_argument("functional_form", type=str, choices=["uniform", "linear", "exponential", "gaussian", "core_uniform", "core_linear", "core_exponential", "core_gaussian", "inert_core"], help="desired functional form of composition profile")
+parser.add_argument("comp_outfile_name", type=str, help="save file name of generated composition profile")
+parser.add_argument("entropy_outfile_name", type=str, help="save file name of generated entropy profile")
+parser.add_argument("specific_entropy", type=float, help="specific entropy in kB/baryon. will be constant throughout the planet")
 # optional arguments
 parser.add_argument("-mz", "--mz", type=float, help="total metal mass")
 parser.add_argument("-mzunits", "--mzunits", type=astropy.units.core.Unit, help="units of total metal mass. defaults to earth masses if not specified")
@@ -418,7 +483,7 @@ if "core_" in args.functional_form:
 else:
     num_none_args = sum(x is None for x in [args.mz, args.zc, args.zatm])
 
-if num_none_args > 1 and args.functional_form != "uniform" and args.functional_form != "core_uniform":
+if num_none_args > 1 and args.functional_form != "uniform" and args.functional_form != "core_uniform" and args.functional_form != "inert_core":
     raise Exception("not enough information to calculate profile!")
 
 # handle metal mass units. other args (zc, zatm, q1) are all dimensionless, so don't require handling
@@ -433,8 +498,10 @@ else:
 print("desired total metal mass is: {0}".format(mz_in))
 #print(type(mz_in))
 
-generate_and_save_profile(mesa_profile, form=args.functional_form, savefilename=args.outfile_name, fortran_format=fortran_format, mz=mz_in, zc=args.zc, zatm=args.zatm, q1=args.q1, species=pp_extras_species, protosolar_mass_fractions=pp_extras_protosolar_mass_fractions)
 
 
+generate_and_save_composition_profile(mesa_profile, form=args.functional_form, savefilename=args.comp_outfile_name, fortran_format=fortran_format, mz=mz_in, zc=args.zc, zatm=args.zatm, q1=args.q1, species=pp_extras_species, protosolar_mass_fractions=pp_extras_protosolar_mass_fractions)
+
+generate_and_save_entropy_profile(mesa_profile, savefilename=args.entropy_outfile_name, specific_entropy=args.specific_entropy, fortran_format=fortran_format)
 
 
