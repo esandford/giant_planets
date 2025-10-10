@@ -13,11 +13,14 @@ from astropy.table import Table
 from astropy import units as u
 from astropy.constants import G
 
+from scipy import interpolate
+
 import mesa_helper as mh
 import os
 import shutil
+import copy
 
-__all__ = ['MESAtable', 'SCVHtable', 'CMStable', 'CEPAMtable', 'mazevet2022table','boundary_mask_rhoT', 'boundary_mask_PT', 'finite_difference_dlrho_T', 'finite_difference_dlT_rho']
+__all__ = ['MESAtable', 'SCVHtable', 'CMStable', 'CEPAMtable', 'mazevet2022table','boundary_mask_rhoT', 'boundary_mask_PT', 'finite_difference_dlrho_T', 'finite_difference_dlT_rho', 'plot_PSE', 'interpolate_problematic_values', 'contourf_sublots_with_colorbars', 'finite_difference', 'consistency_metrics']
 
 class CEPAMtable(object):
     '''
@@ -663,3 +666,344 @@ def finite_difference_dlT_rho(CMStable):
     dlS_dlT_rho[:,-1] = dlS_dlT_rho[:,-2]
 
     return dlP_dlT_rho, dlS_dlT_rho
+
+
+def plot_PSE(CMStable, P, S, E):
+    rho = 10**CMStable.log10rhogrid
+    T = 10**CMStable.log10Tgrid
+    
+    nrho, nT = np.shape(CMStable.log10Tgrid)
+    
+    grid_rho = rho[:,0]
+    grid_T = T[0]
+    
+    #between_rho = 0.5*(grid_rho[0:-1] + grid_rho[1:])
+    #between_T = 0.5*(grid_T[0:-1] + grid_T[1:])
+
+    between_rho = grid_rho[1:-1]
+    between_T = grid_T[1:-1]
+    
+    # get rid of single inf value
+    E[~np.isfinite(E)] = np.max(E[np.isfinite(E)])
+    S[~np.isfinite(S)] = np.max(S[np.isfinite(S)])
+
+    mask1 = boundary_mask_rhoT(CMStable)
+    mask2 = boundary_mask_PT(CMStable)
+
+    allowedMask = ~mask1 & ~mask2
+        
+    plot_rho = np.ma.array(CMStable.log10rhogrid, mask=~allowedMask, fill_value = np.nan)
+    plot_T = np.ma.array(CMStable.log10Tgrid, mask=~allowedMask, fill_value = np.nan)
+    plot_P = P#np.ma.array(P, mask=~allowedMask, fill_value = np.nan)
+    plot_S = S#np.ma.array(S, mask=~allowedMask, fill_value = np.nan)
+    plot_E = E#np.ma.array(E, mask=~allowedMask, fill_value = np.nan)
+
+    fig, axes = plt.subplots(1,3,figsize=(24,6))
+
+    divider00 = make_axes_locatable(axes[0])
+    cax00 = divider00.append_axes('right', size='5%', pad=0.05)
+    cs00 = axes[0].contourf(plot_rho, plot_T, np.log10(plot_P), shading='nearest', cmap='magma', levels=np.linspace(0,30,20))
+    fig.colorbar(cs00, cax=cax00, orientation='vertical',label='log10 P')
+    
+    divider01 = make_axes_locatable(axes[1])
+    cax01 = divider01.append_axes('right', size='5%', pad=0.05)
+    cs01 = axes[1].contourf(plot_rho, plot_T, np.log10(plot_S), shading='nearest', cmap='magma',levels=np.linspace(6,10,20))
+    fig.colorbar(cs01, cax=cax01, orientation='vertical',label='log10 S')
+
+    divider02 = make_axes_locatable(axes[2])
+    cax02 = divider02.append_axes('right', size='5%', pad=0.05)
+    cs02 = axes[2].contourf(plot_rho, plot_T, np.log10(plot_E), shading='nearest', cmap='magma',levels=np.linspace(9,20,20))
+    fig.colorbar(cs02, cax=cax02, orientation='vertical',label='log10 E')
+
+    log10rho_ = np.linspace(-8,8,100)
+    for ax in axes:
+        ax.set_xlim(-8,6)
+        ax.set_ylim(2,8)
+        ax.set_xlabel('log10rho')
+        ax.set_ylabel('log10T')
+        ax.plot(log10rho_, 3.3 + (1./2.)*log10rho_ + np.log10(CMStable.atomic_number) - (5./3)*np.log10(CMStable.mass_number), ls='-', color='#7FFF00')
+        #ax.axvline(2,ls='-',color='#7FFF00')
+        #ax.axhline(6,ls='-',color='#7FFF00') 
+        
+    plt.subplots_adjust(wspace=0.3)
+    plt.show()
+    return 
+
+#print(cms19_He.log10rhogrid[200])
+#print(cms19_He.log10Tgrid[:,80])
+
+def interpolate_problematic_values(CMStable, bad_rho_idxs=None, bad_T_idxs=None):
+
+    log10rho = CMStable.log10rhogrid
+    log10T = CMStable.log10Tgrid
+
+    grid_log10rho = log10rho[:,0]
+    grid_log10T = log10T[0]
+
+    if bad_rho_idxs is not None:
+        grid_log10rho_masked = [rho for i, rho in enumerate(grid_log10rho) if i not in bad_rho_idxs]
+    else:
+        grid_log10rho_masked = grid_log10rho
+    if bad_T_idxs is not None:
+        grid_log10T_masked = [T for i, T in enumerate(grid_log10T) if i not in bad_T_idxs]
+    else:
+        grid_log10T_masked = grid_log10T
+
+    masked_T, masked_rho = np.meshgrid(grid_log10T_masked, grid_log10rho_masked)
+
+    masked_P = copy.deepcopy(CMStable.log10Pgrid)
+    masked_S = copy.deepcopy(CMStable.log10Sgrid)
+    masked_E = copy.deepcopy(CMStable.log10Ugrid)
+
+    if bad_rho_idxs is not None:
+        for bad_rho_idx in bad_rho_idxs:
+            masked_P[bad_rho_idx] = np.nan
+            masked_S[bad_rho_idx] = np.nan
+            masked_E[bad_rho_idx] = np.nan
+    if bad_T_idxs is not None:
+        for bad_T_idx in bad_T_idxs:
+            masked_P[:,bad_T_idx] = np.nan
+            masked_S[:,bad_T_idx] = np.nan
+            masked_E[:,bad_T_idx] = np.nan
+
+    masked_P = masked_P[~np.isnan(masked_P)].reshape((len(grid_log10rho_masked),len(grid_log10T_masked)))
+    masked_S = masked_S[~np.isnan(masked_S)].reshape((len(grid_log10rho_masked),len(grid_log10T_masked)))
+    masked_E = masked_E[~np.isnan(masked_E)].reshape((len(grid_log10rho_masked),len(grid_log10T_masked)))
+    
+    interp_P = interpolate.RegularGridInterpolator(points=(grid_log10rho_masked, grid_log10T_masked), values=masked_P, bounds_error=False, fill_value=None, method='cubic')
+    interp_S = interpolate.RegularGridInterpolator(points=(grid_log10rho_masked, grid_log10T_masked), values=masked_S, bounds_error=False, fill_value=None, method='cubic')
+    interp_E = interpolate.RegularGridInterpolator(points=(grid_log10rho_masked, grid_log10T_masked), values=masked_E, bounds_error=False, fill_value=None, method='cubic')
+
+    new_P = interp_P((log10rho, log10T))
+    new_S = interp_S((log10rho, log10T))
+    new_E = interp_E((log10rho, log10T))
+    
+    return new_P, new_S, new_E
+
+
+def contourf_sublots_with_colorbars(nRow, nCol, xs, ys, zs, xlims, ylims, zlims, levels, xlabels, ylabels, zlabels, cmap='magma', vlines=None, hlines=None, otherlines_x=None, otherlines_y=None, savename=None):
+
+    fig, axes = plt.subplots(nRow, nCol, figsize=(8*nCol, 6*nRow))
+
+    axes = np.atleast_2d(axes)
+    if nCol == 1 and nRow > 1:
+        axes = axes.T
+        
+    for i in range(nRow):
+        for j in range(nCol):
+            divider = make_axes_locatable(axes[i,j])
+            cax = divider.append_axes('right', size='5%', pad=0.05)
+            if zlims is None:
+                cs = axes[i,j].contourf(xs[i*nCol + j], ys[i*nCol + j], zs[i*nCol + j], shading='nearest', cmap=cmap, levels=levels[i*nCol+j])
+            
+            else:
+                cs = axes[i,j].contourf(xs[i*nCol + j], ys[i*nCol + j], zs[i*nCol + j], shading='nearest', cmap=cmap, levels=np.linspace(zlims[i*nCol+j][0],zlims[i*nCol+j][1],levels[i*nCol+j]))
+            cb = fig.colorbar(cs, cax=cax, orientation='vertical')
+            cb.set_label('{0}'.format(zlabels[i*nCol + j]), size=18)
+            cb.ax.tick_params(labelsize=14)
+            
+            axes[i,j].set_xlim(xlims[i*nCol + j])
+            axes[i,j].set_ylim(ylims[i*nCol + j])
+
+            axes[i,j].set_xlabel(xlabels[i*nCol + j],fontsize=18)
+            axes[i,j].set_ylabel(ylabels[i*nCol + j],fontsize=18)
+            axes[i,j].tick_params(axis='both', which='major', labelsize=14)
+
+
+            if vlines is not None:
+                for v in vlines:
+                    axes[i,j].axvline(v,color='#7FFF00')
+            if hlines is not None:
+                for h in hlines:
+                    axes[i,j].axhline(h,color='#7FFF00')
+
+            if otherlines_x is not None:
+                for k,x in enumerate(otherlines_x):
+                    axes[i,j].plot(otherlines_x[k],otherlines_y[k],ls='-',color='#7FFF00')
+
+    plt.subplots_adjust(wspace=0.3)
+    if savename is None:
+        plt.show()
+    else:
+        plt.savefig(savename,bbox_inches='tight')
+    return 
+
+def finite_difference(CMStable, P, S, E, species = 'H', maskUnphysicalRegion=True, plot=False, savename=None):
+    log10rho = CMStable.log10rhogrid
+    log10T = CMStable.log10Tgrid
+    
+    rho = 10**CMStable.log10rhogrid
+    T = 10**CMStable.log10Tgrid
+
+    nrho, nT = np.shape(CMStable.log10Tgrid)
+    
+    grid_rho = rho[:,0]
+    grid_T = T[0]
+    
+    #between_rho = 0.5*(grid_rho[0:-1] + grid_rho[1:])
+    #between_T = 0.5*(grid_T[0:-1] + grid_T[1:])
+
+    between_rho = grid_rho[1:-1]
+    between_T = grid_T[1:-1]
+    
+    # get rid of single inf value
+    E[~np.isfinite(E)] = np.max(E[np.isfinite(E)])
+    S[~np.isfinite(S)] = np.max(S[np.isfinite(S)])
+
+    # derivs wrt rho at fixed T
+    dP_drho_T_btwn_rho_grid_points = np.zeros((nrho-2, nT))
+    dS_drho_T_btwn_rho_grid_points = np.zeros((nrho-2, nT))
+    dE_drho_T_btwn_rho_grid_points = np.zeros((nrho-2, nT))
+
+    for i in range(1, nrho - 1): # number of unique rho values = 281
+        dP_drho_T_btwn_rho_grid_points[i-1] = (P[i+1] - P[i-1])/(rho[i+1] - rho[i-1])
+        dS_drho_T_btwn_rho_grid_points[i-1] = (S[i+1] - S[i-1])/(rho[i+1] - rho[i-1])
+        dE_drho_T_btwn_rho_grid_points[i-1] = (E[i+1] - E[i-1])/(rho[i+1] - rho[i-1])
+    
+    # bounds_error = False, fill_value = None should allow the entries on the edges of the grid to be extrapolated.
+    interp_dP_drho_T_given_log10rho_log10T_cubic = interpolate.RegularGridInterpolator(points=(between_rho, grid_T), values=dP_drho_T_btwn_rho_grid_points, bounds_error=False, fill_value=None, method='linear')
+    interp_dS_drho_T_given_log10rho_log10T_cubic = interpolate.RegularGridInterpolator(points=(between_rho, grid_T), values=dS_drho_T_btwn_rho_grid_points, bounds_error=False, fill_value=None, method='linear')
+    interp_dE_drho_T_given_log10rho_log10T_cubic = interpolate.RegularGridInterpolator(points=(between_rho, grid_T), values=dE_drho_T_btwn_rho_grid_points, bounds_error=False, fill_value=None, method='linear')
+
+    dP_drho_T = interp_dP_drho_T_given_log10rho_log10T_cubic((10**CMStable.log10rhogrid, 10**CMStable.log10Tgrid))
+    dS_drho_T = interp_dS_drho_T_given_log10rho_log10T_cubic((10**CMStable.log10rhogrid, 10**CMStable.log10Tgrid))
+    dE_drho_T = interp_dE_drho_T_given_log10rho_log10T_cubic((10**CMStable.log10rhogrid, 10**CMStable.log10Tgrid))
+
+    # derivs wrt T at fixed rho
+    dP_dT_rho_btwn_T_grid_points = np.zeros((nrho, nT-2))
+    dS_dT_rho_btwn_T_grid_points = np.zeros((nrho, nT-2))
+    dE_dT_rho_btwn_T_grid_points = np.zeros((nrho, nT-2))
+
+    for j in range(1, nT - 1): # number of unique T values = 121
+        dP_dT_rho_btwn_T_grid_points[:,j-1] = (P[:,j+1] - P[:,j-1])/(T[:,j+1] - T[:,j-1])
+        dS_dT_rho_btwn_T_grid_points[:,j-1] = (S[:,j+1] - S[:,j-1])/(T[:,j+1] - T[:,j-1])
+        dE_dT_rho_btwn_T_grid_points[:,j-1] = (E[:,j+1] - E[:,j-1])/(T[:,j+1] - T[:,j-1])
+
+    interp_dP_dT_rho_given_log10rho_log10T_cubic = interpolate.RegularGridInterpolator(points=(grid_rho, between_T), values=dP_dT_rho_btwn_T_grid_points, bounds_error=False, fill_value=None, method='linear')
+    interp_dS_dT_rho_given_log10rho_log10T_cubic = interpolate.RegularGridInterpolator(points=(grid_rho, between_T), values=dS_dT_rho_btwn_T_grid_points, bounds_error=False, fill_value=None, method='linear')
+    interp_dE_dT_rho_given_log10rho_log10T_cubic = interpolate.RegularGridInterpolator(points=(grid_rho, between_T), values=dE_dT_rho_btwn_T_grid_points, bounds_error=False, fill_value=None, method='linear')
+
+    dP_dT_rho = interp_dP_dT_rho_given_log10rho_log10T_cubic((10**CMStable.log10rhogrid, 10**CMStable.log10Tgrid))
+    dS_dT_rho = interp_dS_dT_rho_given_log10rho_log10T_cubic((10**CMStable.log10rhogrid, 10**CMStable.log10Tgrid))
+    dE_dT_rho = interp_dE_dT_rho_given_log10rho_log10T_cubic((10**CMStable.log10rhogrid, 10**CMStable.log10Tgrid))
+
+    if maskUnphysicalRegion is True:
+        #allowedMask = ~boundary_mask_rhoT(CMStable) & ~boundary_mask_PT(CMStable)
+
+        if species=='H':
+            # hydrogen table
+            boundary = 3.7 + 0.5*CMStable.log10rhogrid + np.log10(CMStable.atomic_number) - (5./3)*np.log10(CMStable.mass_number)
+            mask = (CMStable.log10Tgrid < boundary) | (CMStable.log10rhogrid < -7.9)
+        elif species=='He':  
+            # helium table
+            boundary = 3.9 + 0.5*CMStable.log10rhogrid + np.log10(CMStable.atomic_number) - (5./3)*np.log10(CMStable.mass_number)
+            mask = (CMStable.log10Tgrid < boundary) | (CMStable.log10Tgrid < 2.3) | (CMStable.log10rhogrid < -7.7)
+            
+        allowedMask = ~mask
+    
+        log10rho = np.ma.array(log10rho, mask=~allowedMask, fill_value = np.nan)
+        log10T = np.ma.array(log10T, mask=~allowedMask, fill_value = np.nan)
+        # note: P is NOT logged
+        P = np.ma.array(P, mask=~allowedMask, fill_value = np.nan)
+        S = np.ma.array(S, mask=~allowedMask, fill_value = np.nan)
+        E = np.ma.array(E, mask=~allowedMask, fill_value = np.nan)
+
+        dP_drho_T = np.ma.array(dP_drho_T, mask=~allowedMask, fill_value = np.nan)
+        dS_drho_T = np.ma.array(dS_drho_T, mask=~allowedMask, fill_value = np.nan)
+        dE_drho_T = np.ma.array(dE_drho_T, mask=~allowedMask, fill_value = np.nan)
+    
+        dP_dT_rho = np.ma.array(dP_dT_rho, mask=~allowedMask, fill_value = np.nan)
+        dS_dT_rho = np.ma.array(dS_dT_rho, mask=~allowedMask, fill_value = np.nan)
+        dE_dT_rho = np.ma.array(dE_dT_rho, mask=~allowedMask, fill_value = np.nan)
+
+    if plot is True:
+        plot_line_x = np.linspace(-8,8,100)
+        plot_line_y = 3.3 + (1./2.)*plot_line_x + np.log10(CMStable.atomic_number) - (5./3)*np.log10(CMStable.mass_number)
+
+        contourf_sublots_with_colorbars(nRow=2, nCol=3, 
+                                xs=[log10rho,log10rho,log10rho,log10rho,log10rho,log10rho],
+                                ys=[log10T,log10T,log10T,log10T,log10T,log10T],
+                                zs=[np.log10(dP_drho_T),np.log10(-1*dS_drho_T),np.log10(np.abs(dE_drho_T)),np.log10(dP_dT_rho),np.log10(dS_dT_rho),np.log10(dE_dT_rho)],
+                                xlims=[(-8,6),(-8,6),(-8,6),(-8,6),(-8,6),(-8,6)], 
+                                ylims=[(2,8),(2,8),(2,8),(2,8),(2,8),(2,8)], 
+                                zlims=None,#[(9,17),(1,17),(8,20),(0,15),(0,6),(7,10)], 
+                                levels=[25,25,25,25,25,25], 
+                                xlabels=[r'$\log_{10}\rho$',r'$\log_{10}\rho$',r'$\log_{10}\rho$',r'$\log_{10}\rho$',r'$\log_{10}\rho$',r'$\log_{10}\rho$'],
+                                ylabels=[r'$\log_{10}T$',r'$\log_{10}T$',r'$\log_{10}T$',r'$\log_{10}T$',r'$\log_{10}T$',r'$\log_{10}T$'],
+                                zlabels=['log10(dP_drho_T)','log10(-1*dS_drho_T)','log10(dE_drho_T)','log10(dP_dT_rho)','log10(dS_dT_rho)','log10(dE_dT_rho)'],
+                                cmap='magma', vlines=None, hlines=None, otherlines_x=[plot_line_x], otherlines_y=[plot_line_y], savename=None)
+
+
+    return dP_drho_T, dS_drho_T, dE_drho_T, dP_dT_rho, dS_dT_rho, dE_dT_rho
+
+def consistency_metrics(CMStable,P,S,E,dP_drho_T, dS_drho_T, dE_drho_T, dP_dT_rho, dS_dT_rho, dE_dT_rho,species='H',maskUnphysicalRegion=True,plot=False, savename=None):
+    log10rho = CMStable.log10rhogrid
+    log10T = CMStable.log10Tgrid
+    
+    rho = 10**CMStable.log10rhogrid
+    T = 10**CMStable.log10Tgrid
+
+    dpe = ((rho**2/P) * dE_drho_T) + ((T/P) * dP_dT_rho) - 1
+    dse = (T * (dS_dT_rho/dE_dT_rho)) - 1
+    dsp = (-1 * rho**2 * (dS_drho_T/dP_dT_rho)) - 1
+
+    a = -1 * P * dpe
+    b = -1 * dE_dT_rho * dse
+    c = (1/rho**2) * dP_dT_rho * dsp
+
+    if maskUnphysicalRegion is True:
+
+        if species=='H':
+            # hydrogen table
+            boundary = 3.7 + 0.5*CMStable.log10rhogrid + np.log10(CMStable.atomic_number) - (5./3)*np.log10(CMStable.mass_number)
+            mask = (CMStable.log10Tgrid < boundary) | (CMStable.log10rhogrid < -7.9)
+        elif species=='He':  
+            # helium table
+            boundary = 3.9 + 0.5*CMStable.log10rhogrid + np.log10(CMStable.atomic_number) - (5./3)*np.log10(CMStable.mass_number)
+            mask = (CMStable.log10Tgrid < boundary) | (CMStable.log10Tgrid < 2.3) | (CMStable.log10rhogrid < -7.7)
+            
+        allowedMask = ~mask
+    
+        log10rho = np.ma.array(log10rho, mask=~allowedMask, fill_value = np.nan)
+        log10T = np.ma.array(log10T, mask=~allowedMask, fill_value = np.nan)
+        # note: P is NOT logged
+        P = np.ma.array(P, mask=~allowedMask, fill_value = np.nan)
+        S = np.ma.array(S, mask=~allowedMask, fill_value = np.nan)
+        E = np.ma.array(E, mask=~allowedMask, fill_value = np.nan)
+
+        dP_drho_T = np.ma.array(dP_drho_T, mask=~allowedMask, fill_value = np.nan)
+        dS_drho_T = np.ma.array(dS_drho_T, mask=~allowedMask, fill_value = np.nan)
+        dE_drho_T = np.ma.array(dE_drho_T, mask=~allowedMask, fill_value = np.nan)
+    
+        dP_dT_rho = np.ma.array(dP_dT_rho, mask=~allowedMask, fill_value = np.nan)
+        dS_dT_rho = np.ma.array(dS_dT_rho, mask=~allowedMask, fill_value = np.nan)
+        dE_dT_rho = np.ma.array(dE_dT_rho, mask=~allowedMask, fill_value = np.nan)
+
+        dpe = np.ma.array(dpe, mask=~allowedMask, fill_value = np.nan)
+        dse = np.ma.array(dse, mask=~allowedMask, fill_value = np.nan)
+        dsp = np.ma.array(dsp, mask=~allowedMask, fill_value = np.nan)
+
+        a = np.ma.array(a, mask=~allowedMask, fill_value = np.nan)
+        b = np.ma.array(b, mask=~allowedMask, fill_value = np.nan)
+        c = np.ma.array(c, mask=~allowedMask, fill_value = np.nan)
+
+
+    if plot is True:
+        plot_line_x = np.linspace(-8,8,100)
+        plot_line_y = 3.3 + (1./2.)*plot_line_x + np.log10(CMStable.atomic_number) - (5./3)*np.log10(CMStable.mass_number)
+
+        contourf_sublots_with_colorbars(nRow=2, nCol=3, 
+                                xs=[log10rho,log10rho,log10rho,log10rho,log10rho,log10rho],
+                                ys=[log10T,log10T,log10T,log10T,log10T,log10T],
+                                zs=[dpe, dse, dsp, np.log10(np.abs(a)) * np.sign(a),np.log10(np.abs(b)) * np.sign(b),np.log10(np.abs(c)) * np.sign(c)],
+                                xlims=[(-8,6),(-8,6),(-8,6),(-8,6),(-8,6),(-8,6)], 
+                                ylims=[(2,8),(2,8),(2,8),(2,8),(2,8),(2,8)], 
+                                zlims=[(-0.5,0.5),(-2.5,2.5),(-0.6,0.6),(-22,22),(-10,10),(-15,15)], 
+                                levels=[25,25,25,25,25,25], 
+                                xlabels=[r'$\log_{10}\rho$',r'$\log_{10}\rho$',r'$\log_{10}\rho$',r'$\log_{10}\rho$',r'$\log_{10}\rho$',r'$\log_{10}\rho$'],
+                                ylabels=[r'$\log_{10}T$',r'$\log_{10}T$',r'$\log_{10}T$',r'$\log_{10}T$',r'$\log_{10}T$',r'$\log_{10}T$'],
+                                zlabels=['dpe','dse','dsp','log10(abs(a))*sign(a)','log10(abs(b))*sign(b)','log10(abs(c))*sign(c)'],
+                                cmap='coolwarm', vlines=None, hlines=None, otherlines_x=[plot_line_x], otherlines_y=[plot_line_y], savename=None)
+
+    return dpe, dse, dsp, a, b, c
+    
