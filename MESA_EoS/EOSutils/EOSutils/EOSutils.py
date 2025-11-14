@@ -20,7 +20,7 @@ import os
 import shutil
 import copy
 
-__all__ = ['MESAtable', 'SCVHtable', 'CMStable', 'CEPAMtable', 'mazevet2022table','boundary_mask_rhoT', 'boundary_mask_PT', 'finite_difference_dlrho_T', 'finite_difference_dlT_rho', 'plot_PSE', 'interpolate_problematic_values', 'contourf_sublots_with_colorbars', 'finite_difference', 'consistency_metrics']
+__all__ = ['MESAtable', 'SCVHtable', 'CMStable', 'CEPAMtable', 'mazevet2022table','boundary_mask_rhoT', 'boundary_mask_PT', 'finite_difference_dlrho_T', 'finite_difference_dlT_rho', 'plot_PSE', 'interpolate_problematic_values', 'contourf_sublots_with_colorbars', 'finite_difference', 'finite_difference_single_grid', 'consistency_metrics']
 
 class CEPAMtable(object):
     '''
@@ -627,6 +627,7 @@ def finite_difference_dlrho_T(CMStable):
 
     This works for CMS or SCVH tables
     """
+    
     dlP_dlrho_T = np.zeros_like(CMStable.log10Tgrid)
     dlS_dlrho_T = np.zeros_like(CMStable.log10Tgrid)
     
@@ -644,7 +645,10 @@ def finite_difference_dlrho_T(CMStable):
     # fudge last row
     dlP_dlrho_T[-1] = dlP_dlrho_T[-2]
     dlS_dlrho_T[-1] = dlS_dlrho_T[-2]
-    
+    '''
+    (dlP_dlrho_T, throwaway) = np.gradient(CMStable.log10Pgrid, 0.05, 0.05, edge_order=1)
+    (dlS_dlrho_T, throwaway) = np.gradient(CMStable.log10Sgrid, 0.05, 0.05, edge_order=1)
+    '''
     return dlP_dlrho_T, dlS_dlrho_T
 
 def finite_difference_dlT_rho(CMStable):
@@ -654,6 +658,7 @@ def finite_difference_dlT_rho(CMStable):
 
     This works for CMS or SCVH tables
     """
+    
     dlP_dlT_rho = np.zeros_like(CMStable.log10Tgrid)
     dlS_dlT_rho = np.zeros_like(CMStable.log10Tgrid)
     
@@ -664,7 +669,11 @@ def finite_difference_dlT_rho(CMStable):
     # fudge last column
     dlP_dlT_rho[:,-1] = dlP_dlT_rho[:,-2]
     dlS_dlT_rho[:,-1] = dlS_dlT_rho[:,-2]
+    '''
 
+    (throwaway, dlP_dlT_rho) = np.gradient(CMStable.log10Pgrid, 0.05, 0.05, edge_order=1)
+    (throwaway, dlS_dlT_rho) = np.gradient(CMStable.log10Sgrid, 0.05, 0.05, edge_order=1)
+    '''
     return dlP_dlT_rho, dlS_dlT_rho
 
 
@@ -782,6 +791,11 @@ def interpolate_problematic_values(CMStable, bad_rho_idxs=None, bad_T_idxs=None)
 
 
 def contourf_sublots_with_colorbars(nRow, nCol, xs, ys, zs, xlims, ylims, zlims, levels, xlabels, ylabels, zlabels, cmap='magma', vlines=None, hlines=None, otherlines_x=None, otherlines_y=None, savename=None):
+    if isinstance(cmap,str):
+        cmap_str = cmap
+        cmap = []
+        for i in range(nRow*nCol):
+            cmap.append(cmap_str)
 
     fig, axes = plt.subplots(nRow, nCol, figsize=(8*nCol, 6*nRow))
 
@@ -794,10 +808,10 @@ def contourf_sublots_with_colorbars(nRow, nCol, xs, ys, zs, xlims, ylims, zlims,
             divider = make_axes_locatable(axes[i,j])
             cax = divider.append_axes('right', size='5%', pad=0.05)
             if zlims is None:
-                cs = axes[i,j].contourf(xs[i*nCol + j], ys[i*nCol + j], zs[i*nCol + j], shading='nearest', cmap=cmap, levels=levels[i*nCol+j])
+                cs = axes[i,j].contourf(xs[i*nCol + j], ys[i*nCol + j], zs[i*nCol + j], shading='nearest', cmap=cmap[i*nCol + j], levels=levels[i*nCol+j])
             
             else:
-                cs = axes[i,j].contourf(xs[i*nCol + j], ys[i*nCol + j], zs[i*nCol + j], shading='nearest', cmap=cmap, levels=np.linspace(zlims[i*nCol+j][0],zlims[i*nCol+j][1],levels[i*nCol+j]))
+                cs = axes[i,j].contourf(xs[i*nCol + j], ys[i*nCol + j], zs[i*nCol + j], shading='nearest', cmap=cmap[i*nCol + j], levels=np.linspace(zlims[i*nCol+j][0],zlims[i*nCol+j][1],levels[i*nCol+j]))
             cb = fig.colorbar(cs, cax=cax, orientation='vertical')
             cb.set_label('{0}'.format(zlabels[i*nCol + j]), size=18)
             cb.ax.tick_params(labelsize=14)
@@ -849,7 +863,7 @@ def finite_difference(CMStable, P, S, E, species = 'H', maskUnphysicalRegion=Tru
     # get rid of single inf value
     E[~np.isfinite(E)] = np.max(E[np.isfinite(E)])
     S[~np.isfinite(S)] = np.max(S[np.isfinite(S)])
-
+    
     # derivs wrt rho at fixed T
     dP_drho_T_btwn_rho_grid_points = np.zeros((nrho-2, nT))
     dS_drho_T_btwn_rho_grid_points = np.zeros((nrho-2, nT))
@@ -886,6 +900,12 @@ def finite_difference(CMStable, P, S, E, species = 'H', maskUnphysicalRegion=Tru
     dP_dT_rho = interp_dP_dT_rho_given_log10rho_log10T_cubic((10**CMStable.log10rhogrid, 10**CMStable.log10Tgrid))
     dS_dT_rho = interp_dS_dT_rho_given_log10rho_log10T_cubic((10**CMStable.log10rhogrid, 10**CMStable.log10Tgrid))
     dE_dT_rho = interp_dE_dT_rho_given_log10rho_log10T_cubic((10**CMStable.log10rhogrid, 10**CMStable.log10Tgrid))
+    '''
+
+    (dP_drho_T, dP_dT_rho) = np.gradient(P, 10**CMStable.independent_arr_2,10**CMStable.independent_arr_1,edge_order=1)
+    (dS_drho_T, dS_dT_rho) = np.gradient(S, 10**CMStable.independent_arr_2,10**CMStable.independent_arr_1,edge_order=1)
+    (dE_drho_T, dE_dT_rho) = np.gradient(E, 10**CMStable.independent_arr_2,10**CMStable.independent_arr_1,edge_order=1)
+    '''
 
     if maskUnphysicalRegion is True:
         #allowedMask = ~boundary_mask_rhoT(CMStable) & ~boundary_mask_PT(CMStable)
@@ -935,6 +955,48 @@ def finite_difference(CMStable, P, S, E, species = 'H', maskUnphysicalRegion=Tru
 
 
     return dP_drho_T, dS_drho_T, dE_drho_T, dP_dT_rho, dS_dT_rho, dE_dT_rho
+
+def finite_difference_single_grid(grid, log10rhogrid, log10Tgrid):
+    log10rho = log10rhogrid
+    log10T = log10Tgrid
+    
+    rho = 10**log10rhogrid
+    T = 10**log10Tgrid
+
+    nrho, nT = np.shape(log10Tgrid)
+    
+    grid_rho = rho[:,0]
+    grid_T = T[0]
+    
+    between_rho = grid_rho[1:-1]
+    between_T = grid_T[1:-1]
+    
+    # derivs wrt rho at fixed T
+    d_drho_T_btwn_rho_grid_points = np.zeros((nrho-2, nT))
+    
+    for i in range(1, nrho - 1): # number of unique rho values = 281
+        d_drho_T_btwn_rho_grid_points[i-1] = (grid[i+1] - grid[i-1])/(rho[i+1] - rho[i-1])
+    
+    # bounds_error = False, fill_value = None should allow the entries on the edges of the grid to be extrapolated.
+    interp_d_drho_T_given_log10rho_log10T_cubic = interpolate.RegularGridInterpolator(points=(between_rho, grid_T), values=d_drho_T_btwn_rho_grid_points, bounds_error=False, fill_value=None, method='linear')
+    
+    d_drho_T = interp_d_drho_T_given_log10rho_log10T_cubic((10**log10rhogrid, 10**log10Tgrid))
+    
+    # derivs wrt T at fixed rho
+    d_dT_rho_btwn_T_grid_points = np.zeros((nrho, nT-2))
+    
+    for j in range(1, nT - 1): # number of unique T values = 121
+        d_dT_rho_btwn_T_grid_points[:,j-1] = (grid[:,j+1] - grid[:,j-1])/(T[:,j+1] - T[:,j-1])
+        
+    interp_d_dT_rho_given_log10rho_log10T_cubic = interpolate.RegularGridInterpolator(points=(grid_rho, between_T), values=d_dT_rho_btwn_T_grid_points, bounds_error=False, fill_value=None, method='linear')
+    
+    d_dT_rho = interp_d_dT_rho_given_log10rho_log10T_cubic((10**log10rhogrid, 10**log10Tgrid))
+    
+    '''
+    (d_drho_T, d_dT_rho) = np.gradient(grid, grid_rho, grid_T, edge_order=1)
+    '''
+
+    return d_drho_T, d_dT_rho
 
 def consistency_metrics(CMStable,P,S,E,dP_drho_T, dS_drho_T, dE_drho_T, dP_dT_rho, dS_dT_rho, dE_dT_rho,species='H',maskUnphysicalRegion=True,plot=False, savename=None):
     log10rho = CMStable.log10rhogrid
@@ -987,23 +1049,27 @@ def consistency_metrics(CMStable,P,S,E,dP_drho_T, dS_drho_T, dE_drho_T, dP_dT_rh
         b = np.ma.array(b, mask=~allowedMask, fill_value = np.nan)
         c = np.ma.array(c, mask=~allowedMask, fill_value = np.nan)
 
+        v_dpe = np.max(np.abs(dpe))
+        v_dse = np.max(np.abs(dse))
+        v_dsp = np.max(np.abs(dsp))
+
 
     if plot is True:
         plot_line_x = np.linspace(-8,8,100)
         plot_line_y = 3.3 + (1./2.)*plot_line_x + np.log10(CMStable.atomic_number) - (5./3)*np.log10(CMStable.mass_number)
 
-        contourf_sublots_with_colorbars(nRow=2, nCol=3, 
-                                xs=[log10rho,log10rho,log10rho,log10rho,log10rho,log10rho],
-                                ys=[log10T,log10T,log10T,log10T,log10T,log10T],
-                                zs=[dpe, dse, dsp, np.log10(np.abs(a)) * np.sign(a),np.log10(np.abs(b)) * np.sign(b),np.log10(np.abs(c)) * np.sign(c)],
-                                xlims=[(-8,6),(-8,6),(-8,6),(-8,6),(-8,6),(-8,6)], 
-                                ylims=[(2,8),(2,8),(2,8),(2,8),(2,8),(2,8)], 
-                                zlims=[(-0.5,0.5),(-2.5,2.5),(-0.6,0.6),(-22,22),(-10,10),(-15,15)], 
-                                levels=[25,25,25,25,25,25], 
-                                xlabels=[r'$\log_{10}\rho$',r'$\log_{10}\rho$',r'$\log_{10}\rho$',r'$\log_{10}\rho$',r'$\log_{10}\rho$',r'$\log_{10}\rho$'],
-                                ylabels=[r'$\log_{10}T$',r'$\log_{10}T$',r'$\log_{10}T$',r'$\log_{10}T$',r'$\log_{10}T$',r'$\log_{10}T$'],
-                                zlabels=['dpe','dse','dsp','log10(abs(a))*sign(a)','log10(abs(b))*sign(b)','log10(abs(c))*sign(c)'],
-                                cmap='coolwarm', vlines=None, hlines=None, otherlines_x=[plot_line_x], otherlines_y=[plot_line_y], savename=None)
+        contourf_sublots_with_colorbars(nRow=3, nCol=3, 
+                                xs=[log10rho,log10rho,log10rho,log10rho,log10rho,log10rho,log10rho,log10rho,log10rho],
+                                ys=[log10T,log10T,log10T,log10T,log10T,log10T,log10T,log10T,log10T],
+                                zs=[dpe, dse, dsp, np.log10(a),np.log10(b) ,np.log10(c),np.log10(-1*a),np.log10(-1*b) ,np.log10(-1*c)],
+                                xlims=[(-8,6),(-8,6),(-8,6),(-8,6),(-8,6),(-8,6),(-8,6),(-8,6),(-8,6)], 
+                                ylims=[(2,8),(2,8),(2,8),(2,8),(2,8),(2,8),(2,8),(2,8),(2,8)], 
+                                zlims=[(-0.5,0.5),(-0.6,0.6),(-0.6,0.6),(-22,22),(-10,10),(-15,15),(-22,22),(-10,10),(-15,15)], 
+                                levels=[25,25,25,25,25,25,25,25,25], 
+                                xlabels=[r'$\log_{10}\rho$',r'$\log_{10}\rho$',r'$\log_{10}\rho$',r'$\log_{10}\rho$',r'$\log_{10}\rho$',r'$\log_{10}\rho$',r'$\log_{10}\rho$',r'$\log_{10}\rho$',r'$\log_{10}\rho$'],
+                                ylabels=[r'$\log_{10}T$',r'$\log_{10}T$',r'$\log_{10}T$',r'$\log_{10}T$',r'$\log_{10}T$',r'$\log_{10}T$',r'$\log_{10}T$',r'$\log_{10}T$',r'$\log_{10}T$'],
+                                zlabels=['dpe','dse','dsp','log10(a)','log10(b)','log10(c)','log10(-1*a)','log10(-1*b)','log10(-1*c)'],
+                                cmap=['coolwarm','coolwarm','coolwarm','coolwarm','coolwarm','coolwarm','coolwarm_r','coolwarm_r','coolwarm_r'], vlines=None, hlines=None, otherlines_x=[plot_line_x], otherlines_y=[plot_line_y], savename=None)
 
     return dpe, dse, dsp, a, b, c
     
