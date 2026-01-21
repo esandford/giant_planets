@@ -13,19 +13,20 @@ from astropy.table import Table
 from astropy import units as u
 from astropy.constants import G
 
-from scipy import interpolate, ndimage
+from scipy import interpolate, ndimage, optimize
 
 import mesa_helper as mh
 import os
 import shutil
 import copy
 
-__all__ = ['read_MESAtable','reshapeQTgrid','simple_table','MESAtable', 'SCVHtable',\
+__all__ = ['read_MESAtable','reshapeQTgrid','fill_in_nans','calc_F_derived_quantities','compute_F',\
+'simple_table','interpolated_PTtable','MESAtable', 'SCVHtable',\
  'CMStable', 'CEPAMtable', 'mazevet2022table', \
 'boundary_mask_rhoT', 'boundary_mask_PT', 'finite_difference_dlrho', 'finite_difference_dlT', \
 'plot_PSE', 'interpolate_problematic_values', 'contourf_sublots_with_colorbars',  \
 'finite_difference', 'finite_difference_PSE', 'consistency_metrics', \
-'format_e', 'calculate_F', 'load_simplified_planet_profile','load_sample_planet_profiles', 'along_profile']
+'format_e', 'load_simplified_planet_profile','load_sample_planet_profiles', 'along_profile']
   
 def read_MESAtable(filename):
     """
@@ -105,6 +106,96 @@ def reshapeQTgrid(QTgrid,lower_logRho_bound,upper_logRho_bound,rounding=2):
             
     return Trhogrid
 
+
+def fill_in_nans(grid, table, fill_value=np.nan):
+    """
+    fill in nans in chosen grid belonging to (rho,T) parameterized table
+    """
+
+    nonans = ~np.isnan(grid)
+    
+    Ts = np.ravel(table.log10Tgrid[nonans])
+    rhos = np.ravel(table.log10rhogrid[nonans])
+    coords = np.vstack((Ts,rhos)).T
+    
+    
+    values = np.ravel(grid[nonans])
+    
+    interp_fn = interpolate.LinearNDInterpolator(coords, values, fill_value=fill_value)
+    
+    interp_grid = interp_fn(table.log10Tgrid, table.log10rhogrid)
+    
+    return interp_grid
+
+def calc_F_derived_quantities(Fgrid, table):
+
+    dF_drho, dF_dT = finite_difference(grid = Fgrid, log10rhogrid = table.log10rhogrid, log10Tgrid = table.log10Tgrid)
+        
+    F_Pgrid = (10**table.log10rhogrid)**2 * dF_drho
+    F_Sgrid = -1.0 * dF_dT
+    F_Egrid = Fgrid + (10**table.log10Tgrid * F_Sgrid)
+    
+    return dF_drho, dF_dT, F_Pgrid, F_Sgrid, F_Egrid
+
+def compute_F(table, F_smoothing_kernel=1, F_nan_fill_value=None):
+    """
+    table must have log10Egrid, log10Tgrid, log10Sgrid defined
+    
+    F_nan_fill_value options:
+        None: no effort to interpolate over nans in Fgrid
+        'min': fill in nans in Fgrid with the minimum value in Fgrid
+        'reflect': reflect the Fgrid horizontally across the unphysical region boundary
+        if a numerical value is passed, fill in nans with this value
+    """
+    Fgrid = 10**table.log10Egrid - ((10**table.log10Tgrid) * (10**table.log10Sgrid))
+
+    # F grid often has nans near the unphysical region boundary. fill these if desired
+    if F_nan_fill_value is not None:
+        if F_nan_fill_value == 'min':
+                Fgrid[np.isnan(Fgrid)] = np.min(Fgrid[~np.isnan(Fgrid)])
+
+        elif F_nan_fill_value == 'reflect':
+            boundary = 3.3 + 0.5*table.log10rhogrid + np.log10(table.atomic_number) - (5./3)*np.log10(table.mass_number)
+            boundary_mask = (table.log10Tgrid < boundary) | np.isnan(Fgrid)
+                
+            for j in range(71):
+                boundary_mask_row = boundary_mask[:,j]
+                boundary_mask_idxs = np.arange(281)[boundary_mask_row]
+                    
+                k = len(Fgrid[:,j][boundary_mask_row])
+                if k > 100:
+                     k = 100
+
+                old = Fgrid[:,j][boundary_mask_row][0:k]
+                new = copy.deepcopy(Fgrid[:,j][~boundary_mask_row][-k:][::-1])
+                    
+                Fgrid[:,j][boundary_mask_idxs[0:k]] = new
+
+        elif isinstance(F_nan_fill_value, float):
+            Fgrid[np.isnan(Fgrid)] = F_nan_fill_value
+        
+        Fgrid = fill_in_nans(Fgrid, table)
+        
+    # smooth F with Gaussian kernel
+    Fgrid = ndimage.gaussian_filter(Fgrid,sigma=F_smoothing_kernel,mode='nearest')
+
+    # calculate derivatives, F_P, F_S, F_e
+    dF_drho, dF_dT, F_Pgrid, F_Sgrid, F_Egrid = calc_F_derived_quantities(Fgrid, table)
+   
+    # identify places where F_P, F_S, or F_E end up negative and retry
+    boundary = 3.3 + 0.5*table.log10rhogrid + np.log10(table.atomic_number) - (5./3)*np.log10(table.mass_number)
+    boundary_mask = (table.log10Tgrid >= boundary)
+
+    negative_mask = boundary_mask & ((F_Pgrid <= 0) | (F_Sgrid <= 0) | (F_Egrid <= 0))
+
+    Fgrid[negative_mask] = np.nan
+
+    Fgrid = fill_in_nans(Fgrid, table)
+
+    # re-calculate derivatives, F_P, F_S, F_e
+    dF_drho, dF_dT, F_Pgrid, F_Sgrid, F_Egrid = calc_F_derived_quantities(Fgrid, table)
+   
+    return dF_drho, dF_dT, F_Pgrid, F_Sgrid, F_Egrid
     
 class simple_table(object):
     def __init__(self, units='cgs', **kwargs):
@@ -120,11 +211,16 @@ class simple_table(object):
         self.atomic_number = None
         self.mass_number = None
 
+        self.independent_arr_1 = None
+        self.independent_arr_2 = None
+
+        self.independent_var_1 = None
+        self.independent_var_2 = None
+
         self.log10Tgrid = None
         self.log10Pgrid = None
         self.log10rhogrid = None
         self.log10Sgrid = None
-        self.log10Ugrid = None
         self.log10Egrid = None
 
         self.Fgrid = None
@@ -134,7 +230,6 @@ class simple_table(object):
         self.F_Sgrid = None
         self.F_Egrid = None
 
-        self.log10Fgrid = None
         self.F_log10Pgrid = None
         self.F_log10Sgrid = None
         self.F_log10Egrid = None
@@ -143,24 +238,145 @@ class simple_table(object):
         self.atomic_number = self.X + 2*(1.-self.X)
         self.mass_number = self.X + 4*(1.-self.X)
 
-    def compute_F(self, F_smoothing_kernel=1):
-        self.log10Egrid = self.log10Ugrid
-
-        Fgrid = 10**self.log10Egrid - ((10**self.log10Tgrid) * (10**self.log10Sgrid))
-        # try smoothing F
-        self.Fgrid = ndimage.gaussian_filter(Fgrid,sigma=F_smoothing_kernel)
-
-        self.dF_drho, self.dF_dT = finite_difference(grid = self.Fgrid, log10rhogrid = self.log10rhogrid, log10Tgrid = self.log10Tgrid)
-    
-        self.F_Pgrid = (10**self.log10rhogrid)**2 * self.dF_drho
-        self.F_Sgrid = -1.0 * self.dF_dT
-        self.F_Egrid = self.Fgrid + (10**self.log10Tgrid * self.F_Sgrid)
-
-        self.log10Fgrid = np.log10(self.Fgrid)
+    def compute_F_table(self, F_smoothing_kernel=1, F_nan_fill_value='reflect'):
+        
+        self.dF_drho, self.dF_dT, self.F_Pgrid, self.F_Sgrid, self.F_Egrid = compute_F(self, F_smoothing_kernel=F_smoothing_kernel, F_nan_fill_value=F_nan_fill_value)
+        
         self.F_log10Pgrid = np.log10(self.F_Pgrid)
         self.F_log10Sgrid = np.log10(self.F_Sgrid)
         self.F_log10Egrid = np.log10(self.F_Egrid)
 
+class interpolated_PTtable(object):
+    '''
+    For holding a (rho, T) table interpolated into (P, T) coordinates
+
+    '''
+
+    def __init__(self, rhoTtable, desired_Tarr=np.arange(2.,8.04,0.05), desired_Parr=np.arange(1.0,23.04,0.05), units='cgs', **kwargs):
+        if units == 'cms' or units == 'cgs' or units == 'CMS':
+            self.units = units
+        else: 
+            print('units must be cgs or mks or CMS (T [K], P [GPa], rho [g/cm^3], U [MJ/kg], S [MJ/kg/K])')
+
+        self.X = rhoTtable.X
+        self.Y = rhoTtable.Y
+
+        self.atomic_number = self.X + 2*(1.-self.X)
+        self.mass_number = self.X + 4*(1.-self.X)
+
+        start_Tgrid = rhoTtable.log10Tgrid
+        start_rhogrid = rhoTtable.log10rhogrid
+        start_Pgrid = rhoTtable.log10Pgrid
+        start_Sgrid = rhoTtable.log10Sgrid
+        start_Ugrid = rhoTtable.log10Ugrid
+
+        self.log10rhogrid = None
+        self.log10Sgrid = None
+        self.log10Ugrid = None
+
+        start_Tarr = np.arange(2.0, 8.04, 0.05)
+        start_rhoarr = np.arange(-8.0,6.04, 0.05)
+
+        allowedMask = ~boundary_mask_rhoT(rhoTtable) & ~boundary_mask_PT(rhoTtable) #& (rhoTtable.log10Tgrid >= 5.)
+    
+        masked_rho = np.ma.array(rhoTtable.log10rhogrid, mask=~allowedMask, fill_value = np.nan)
+        masked_T = np.ma.array(rhoTtable.log10Tgrid, mask=~allowedMask, fill_value = np.nan)
+        masked_S = np.ma.array(rhoTtable.log10Sgrid, mask=~allowedMask, fill_value = np.nan)
+        masked_P = np.ma.array(rhoTtable.log10Pgrid, mask=~allowedMask, fill_value = np.nan)
+        masked_U = np.ma.array(rhoTtable.log10Ugrid, mask=~allowedMask, fill_value = np.nan)
+        
+
+        #self.log10Tgrid, self.log10Pgrid = np.meshgrid(start_Tarr, desired_Parr)
+        self.log10Tgrid, self.log10Pgrid = np.meshgrid(desired_Tarr, desired_Parr)
+
+
+
+        # construct an interpolator to get P as a function of (rho, T)
+        interp_log10P_given_log10rho_log10T_cubic = interpolate.RegularGridInterpolator(points=(start_rhoarr, start_Tarr), values=masked_P, bounds_error=False, fill_value=None, method='cubic')
+        interp_log10P_given_log10rho_log10T_slinear = interpolate.RegularGridInterpolator(points=(start_rhoarr, start_Tarr), values=masked_P, bounds_error=False, fill_value=None, method='slinear')
+        interp_log10P_given_log10rho_log10T_linear = interpolate.RegularGridInterpolator(points=(start_rhoarr, start_Tarr), values=masked_P, bounds_error=False, fill_value=None, method='linear')
+
+        #rbs_log10P = interpolate.RectBivariateSpline(start_rhoarr, start_Tarr, start_Pgrid)
+        #rbs_log10S = interpolate.RectBivariateSpline(start_rhoarr, start_Tarr, start_Sgrid)
+        #rbs_log10U = interpolate.RectBivariateSpline(start_rhoarr, start_Tarr, start_Ugrid)
+
+        rbs_log10P = interpolate.RectBivariateSpline(start_rhoarr, start_Tarr, masked_P, kx=5,ky=5)
+        rbs_log10S = interpolate.RectBivariateSpline(start_rhoarr, start_Tarr, masked_S, kx=5,ky=5)
+        rbs_log10U = interpolate.RectBivariateSpline(start_rhoarr, start_Tarr, masked_U, kx=5,ky=5)
+
+        def interp_log10P(log10rho, log10T, method='slinear'):
+            if method == 'cubic':
+                return interp_log10P_given_log10rho_log10T_cubic((log10rho,log10T))
+                #return rbs_log10P(log10rho,log10T)
+            elif method == 'slinear':
+                return interp_log10P_given_log10rho_log10T_slinear((log10rho,log10T))
+            elif method == 'linear':
+                return interp_log10P_given_log10rho_log10T_linear((log10rho,log10T))
+        
+        def log10P_abs_diff(log10rho, log10P, log10T, method='slinear'):
+            return np.abs(log10P - interp_log10P(log10rho,log10T,method))
+
+
+        # construct interpolators to get S and U as functions of (rho,T)
+        interp_log10S_given_log10rho_log10T_cubic = interpolate.RegularGridInterpolator(points=(start_rhoarr, start_Tarr), values=masked_S, bounds_error=False, fill_value=None, method='cubic')
+        interp_log10S_given_log10rho_log10T_slinear = interpolate.RegularGridInterpolator(points=(start_rhoarr, start_Tarr), values=masked_S, bounds_error=False, fill_value=None, method='slinear')
+        interp_log10S_given_log10rho_log10T_linear = interpolate.RegularGridInterpolator(points=(start_rhoarr, start_Tarr), values=masked_S, bounds_error=False, fill_value=None, method='linear')
+        
+        interp_log10U_given_log10rho_log10T_cubic = interpolate.RegularGridInterpolator(points=(start_rhoarr, start_Tarr), values=masked_U, bounds_error=False, fill_value=None, method='cubic')
+        interp_log10U_given_log10rho_log10T_slinear = interpolate.RegularGridInterpolator(points=(start_rhoarr, start_Tarr), values=masked_U, bounds_error=False, fill_value=None, method='slinear')
+        interp_log10U_given_log10rho_log10T_linear = interpolate.RegularGridInterpolator(points=(start_rhoarr, start_Tarr), values=masked_U, bounds_error=False, fill_value=None, method='linear')
+        
+        
+        def interp_log10S(log10rho, log10T, method='slinear'):
+            if method == 'cubic':
+                return interp_log10S_given_log10rho_log10T_cubic((log10rho,log10T))
+                #return rbs_log10S(log10rho,log10T)
+            elif method == 'slinear':
+                return interp_log10S_given_log10rho_log10T_slinear((log10rho,log10T))
+            elif method == 'linear':
+                return interp_log10S_given_log10rho_log10T_linear((log10rho,log10T))
+        
+        def interp_log10U(log10rho, log10T, method='slinear'):
+            if method == 'cubic':
+                return interp_log10U_given_log10rho_log10T_cubic((log10rho,log10T))
+                #return rbs_log10U(log10rho,log10T)
+            elif method == 'slinear':
+                return interp_log10U_given_log10rho_log10T_slinear((log10rho,log10T))
+            elif method == 'linear':
+                return interp_log10U_given_log10rho_log10T_linear((log10rho,log10T))
+        
+        
+        def solve_log10rhoSU(log10P, log10T, log10rho0=-5., method='slinear'):
+            opt = optimize.minimize(log10P_abs_diff, x0=log10rho0, args=(log10P,log10T,method),bounds=[(-8.05,6.05)], tol=1.e-10) #lower and upper bounds on rho come from np.min, max of np.log10(maz_cepam_rhogrid)
+            opt_log10rho = opt.x[0]
+        
+            corresponding_log10S = interp_log10S(opt_log10rho, log10T, method)
+            corresponding_log10U = interp_log10U(opt_log10rho, log10T, method)
+            return opt_log10rho, corresponding_log10S, corresponding_log10U
+        
+
+
+        # interpolate!
+        log10rhogrid_interpolated = np.zeros_like(self.log10Tgrid)
+        log10Sgrid_interpolated = np.zeros_like(self.log10Tgrid)
+        log10Ugrid_interpolated = np.zeros_like(self.log10Tgrid)
+        
+        for i in range(np.shape(self.log10Tgrid)[1]):
+            this_log10T = self.log10Tgrid[0][i]
+            for j in range(np.shape(self.log10Pgrid)[0]):
+                this_log10P = self.log10Pgrid[:,0][j]
+        
+                # try cubic interpolation first
+                interpolated_log10rho, interpolated_log10S, interpolated_log10U  = solve_log10rhoSU(log10P=this_log10P, log10T=this_log10T, log10rho0=-5, method='slinear')
+        
+                log10rhogrid_interpolated[j,i] = interpolated_log10rho
+                log10Sgrid_interpolated[j,i] = interpolated_log10S
+                log10Ugrid_interpolated[j,i] = interpolated_log10U
+
+        self.log10rhogrid = log10rhogrid_interpolated
+        self.log10Sgrid = log10Sgrid_interpolated
+        self.log10Ugrid = log10Ugrid_interpolated
+        self.log10Egrid = self.log10Ugrid
 
 
 class CEPAMtable(object):
@@ -230,24 +446,9 @@ class CEPAMtable(object):
             self.log10rhogrid[:,i] = self.eosData[:,2][i*nP : (i+1)*nP]
             self.log10Sgrid[:,i] = self.eosData[:,3][i*nP : (i+1)*nP]
 
-        '''
+        
         self.log10Egrid = self.log10Ugrid
-
-        Fgrid = 10**self.log10Egrid - ((10**self.log10Tgrid) * (10**self.log10Sgrid))
-        # try smoothing F
-        self.Fgrid = ndimage.gaussian_filter(Fgrid,sigma=F_smoothing_kernel)
-
-        self.dF_drho, self.dF_dT = finite_difference(grid = self.Fgrid, log10rhogrid = self.log10rhogrid, log10Tgrid = self.log10Tgrid)
-    
-        self.F_Pgrid = (10**self.log10rhogrid)**2 * self.dF_drho
-        self.F_Sgrid = -1.0 * self.dF_dT
-        self.F_Egrid = self.Fgrid + (10**self.log10Tgrid * self.F_Sgrid)
-
-        self.log10Fgrid = np.log10(self.Fgrid)
-        self.F_log10Pgrid = np.log10(self.F_Pgrid)
-        self.F_log10Sgrid = np.log10(self.F_Sgrid)
-        self.F_log10Egrid = np.log10(self.F_Egrid)
-        '''
+        
 
 class MESAtable(object):
     '''
@@ -385,20 +586,7 @@ class MESAtable(object):
 
         self.log10Egrid = self.log10Ugrid
 
-        Fgrid = 10**self.log10Egrid - ((10**self.log10Tgrid) * (10**self.log10Sgrid))
-        # try smoothing F
-        self.Fgrid = ndimage.gaussian_filter(Fgrid,sigma=F_smoothing_kernel)
-
-        self.dF_drho, self.dF_dT = finite_difference(grid = self.Fgrid, log10rhogrid = self.log10rhogrid, log10Tgrid = self.log10Tgrid)
-    
-        self.F_Pgrid = (10**self.log10rhogrid)**2 * self.dF_drho
-        self.F_Sgrid = -1.0 * self.dF_dT
-        self.F_Egrid = self.Fgrid + (10**self.log10Tgrid * self.F_Sgrid)
-
-        self.log10Fgrid = np.log10(self.Fgrid)
-        self.F_log10Pgrid = np.log10(self.F_Pgrid)
-        self.F_log10Sgrid = np.log10(self.F_Sgrid)
-        self.F_log10Egrid = np.log10(self.F_Egrid)
+        
 
 class SCVHtable(object):
     '''
@@ -536,7 +724,7 @@ class SCVHtable(object):
         nP = len(self.independent_arr_2)
 
         self.log10Tgrid, self.log10Pgrid = np.meshgrid(self.independent_arr_1, self.independent_arr_2)
-        self.log10Ugrid = np.zeros_like(self.log10Tgrid)
+        self.log10Egrid = np.zeros_like(self.log10Tgrid)
         self.log10Sgrid = np.zeros_like(self.log10Tgrid)
         self.log10rhogrid = np.zeros_like(self.log10Tgrid)
         self.dlrho_dlT_P_grid = np.zeros_like(self.log10Tgrid)
@@ -549,7 +737,7 @@ class SCVHtable(object):
 
         for i in range(nT):
             self.log10rhogrid[:,i] = self.eosData[:,2][i*nP : (i+1)*nP]
-            self.log10Ugrid[:,i] = self.eosData[:,3][i*nP : (i+1)*nP]
+            self.log10Egrid[:,i] = self.eosData[:,3][i*nP : (i+1)*nP]
             self.log10Sgrid[:,i] = self.eosData[:,4][i*nP : (i+1)*nP]
             self.dlrho_dlT_P_grid[:,i] = self.eosData[:,5][i*nP : (i+1)*nP]
             self.dlrho_dlP_T_grid[:,i] = self.eosData[:,6][i*nP : (i+1)*nP]
@@ -559,22 +747,8 @@ class SCVHtable(object):
             self.nm_grid[:,i] = self.eosData[:,10][i*nP : (i+1)*nP]
             self.na_grid[:,i] = self.eosData[:,11][i*nP : (i+1)*nP]
 
-        self.log10Egrid = self.log10Ugrid
-
-        Fgrid = 10**self.log10Egrid - ((10**self.log10Tgrid) * (10**self.log10Sgrid))
-        # try smoothing F
-        self.Fgrid = ndimage.gaussian_filter(Fgrid,sigma=F_smoothing_kernel)
-
-        self.dF_drho, self.dF_dT = finite_difference(grid = self.Fgrid, log10rhogrid = self.log10rhogrid, log10Tgrid = self.log10Tgrid)
-    
-        self.F_Pgrid = (10**self.log10rhogrid)**2 * self.dF_drho
-        self.F_Sgrid = -1.0 * self.dF_dT
-        self.F_Egrid = self.Fgrid + (10**self.log10Tgrid * self.F_Sgrid)
-
-        self.log10Fgrid = np.log10(self.Fgrid)
-        self.F_log10Pgrid = np.log10(self.F_Pgrid)
-        self.F_log10Sgrid = np.log10(self.F_Sgrid)
-        self.F_log10Egrid = np.log10(self.F_Egrid)
+        self.log10Ugrid = self.log10Egrid
+        
 
 class CMStable(object):
     '''
@@ -592,7 +766,7 @@ class CMStable(object):
     # [:,9] = grad_ad = dlT/dlP_S    EoS quantity 7 given at each grid point
 
     '''
-    def __init__(self, filename, units, F_smoothing_kernel=1, **kwargs):
+    def __init__(self, filename, units, **kwargs):
         self.filename = filename
         if units == 'cms' or units == 'cgs' or units == 'CMS':
             self.units = units
@@ -602,7 +776,7 @@ class CMStable(object):
         if '_H_' in self.filename:
             Y = 0.
             X = 1.
-        elif '_HE_' in self.filename:
+        elif '_HE_' in self.filename or '_He_' in self.filename:
             Y = 1.
             X = 0.
         elif '_HHE_' in self.filename:
@@ -723,21 +897,15 @@ class CMStable(object):
 
         self.log10Ugrid = self.log10Egrid
 
-        Fgrid = 10**self.log10Egrid - ((10**self.log10Tgrid) * (10**self.log10Sgrid))
-        # try smoothing F
-        self.Fgrid = ndimage.gaussian_filter(Fgrid,sigma=F_smoothing_kernel)
-
-        self.dF_drho, self.dF_dT = finite_difference(grid = self.Fgrid, log10rhogrid = self.log10rhogrid, log10Tgrid = self.log10Tgrid)
-    
-        self.F_Pgrid = (10**self.log10rhogrid)**2 * self.dF_drho
-        self.F_Sgrid = -1.0 * self.dF_dT
-        self.F_Egrid = self.Fgrid + (10**self.log10Tgrid * self.F_Sgrid)
-
-        self.log10Fgrid = np.log10(self.Fgrid)
+    # note that the below doesn't work for TP grids
+    def compute_F_table(self, F_smoothing_kernel=1, F_nan_fill_value='reflect'):
+        self.dF_drho, self.dF_dT, self.F_Pgrid, self.F_Sgrid, self.F_Egrid = compute_F(self, F_smoothing_kernel=F_smoothing_kernel, F_nan_fill_value=F_nan_fill_value)
+            
         self.F_log10Pgrid = np.log10(self.F_Pgrid)
         self.F_log10Sgrid = np.log10(self.F_Sgrid)
         self.F_log10Egrid = np.log10(self.F_Egrid)
 
+    
 class mazevet2022table(object):
     # expected columns:  
     # [:,0] = T [K] 
@@ -801,21 +969,7 @@ class mazevet2022table(object):
         
         self.log10Egrid = self.log10Ugrid
 
-        Fgrid = 10**self.log10Egrid - ((10**self.log10Tgrid) * (10**self.log10Sgrid))
-        # try smoothing F
-        self.Fgrid = ndimage.gaussian_filter(Fgrid,sigma=F_smoothing_kernel)
-
-        self.dF_drho, self.dF_dT = finite_difference(grid = self.Fgrid, log10rhogrid = self.log10rhogrid, log10Tgrid = self.log10Tgrid)
-    
-        self.F_Pgrid = (10**self.log10rhogrid)**2 * self.dF_drho
-        self.F_Sgrid = -1.0 * self.dF_dT
-        self.F_Egrid = self.Fgrid + (10**self.log10Tgrid * self.F_Sgrid)
-
-        self.log10Fgrid = np.log10(self.Fgrid)
-        self.F_log10Pgrid = np.log10(self.F_Pgrid)
-        self.F_log10Sgrid = np.log10(self.F_Sgrid)
-        self.F_log10Egrid = np.log10(self.F_Egrid)
-
+        
 def boundary_mask_rhoT(CMStable):
     """
     Return a mask of shape log10Tgrid that sets all values below the "allowed" line to nan
@@ -1316,12 +1470,28 @@ def finite_difference_PSE(CMStable, P, S, E, species = 'H', maskUnphysicalRegion
 
     return dP_drho, dS_drho, dE_drho, dP_dT, dS_dT, dE_dT
 
-def consistency_metrics(CMStable,P,S,E,species='H',maskUnphysicalRegion=True,plot=False,plot_tracks=False,paperplot=False, savename=None):
-    
-    dP_drho, dP_dT = finite_difference(P, CMStable.log10rhogrid, CMStable.log10Tgrid)
-    dS_drho, dS_dT = finite_difference(S, CMStable.log10rhogrid, CMStable.log10Tgrid)
-    dE_drho, dE_dT = finite_difference(E, CMStable.log10rhogrid, CMStable.log10Tgrid)
-
+def consistency_metrics(CMStable,P,S,E,order=6,species='H',maskUnphysicalRegion=True,plot=False,plot_tracks=False,paperplot=False, savename=None):
+    dP_drho, dP_dT = finite_difference(P, CMStable.log10rhogrid, CMStable.log10Tgrid,order=order)
+    dS_drho, dS_dT = finite_difference(S, CMStable.log10rhogrid, CMStable.log10Tgrid,order=order)
+    dE_drho, dE_dT = finite_difference(E, CMStable.log10rhogrid, CMStable.log10Tgrid,order=order)
+    '''
+    print("")
+    print(P[:,0])
+    print(S[:,0])
+    print(E[:,0])
+    print("")
+    '''
+    '''
+    print("")
+    print(dP_drho[:,0])
+    print(dS_drho[:,0])
+    print(dE_drho[:,0])
+    print("")
+    print(dP_dT[:,0])
+    print(dS_dT[:,0])
+    print(dE_dT[:,0])
+    print("")
+    '''
     log10rho = CMStable.log10rhogrid
     log10T = CMStable.log10Tgrid
     
@@ -1350,12 +1520,14 @@ def consistency_metrics(CMStable,P,S,E,species='H',maskUnphysicalRegion=True,plo
 
         if species=='H':
             # hydrogen table
-            boundary = 3.7 + 0.5*CMStable.log10rhogrid + np.log10(CMStable.atomic_number) - (5./3)*np.log10(CMStable.mass_number)
-            mask = (CMStable.log10Tgrid < boundary) | (CMStable.log10rhogrid < -7.9)
+            #boundary = 3.7 + 0.5*CMStable.log10rhogrid + np.log10(CMStable.atomic_number) - (5./3)*np.log10(CMStable.mass_number)
+            boundary = 3.3 + 0.5*CMStable.log10rhogrid + np.log10(CMStable.atomic_number) - (5./3)*np.log10(CMStable.mass_number)
+            mask = (CMStable.log10Tgrid < boundary) #| (CMStable.log10rhogrid < -7.9)
         elif species=='He':  
             # helium table
-            boundary = 3.9 + 0.5*CMStable.log10rhogrid + np.log10(CMStable.atomic_number) - (5./3)*np.log10(CMStable.mass_number)
-            mask = (CMStable.log10Tgrid < boundary) | (CMStable.log10Tgrid < 2.3) | (CMStable.log10rhogrid < -7.7)
+            #boundary = 3.9 + 0.5*CMStable.log10rhogrid + np.log10(CMStable.atomic_number) - (5./3)*np.log10(CMStable.mass_number)
+            boundary = 3.3 + 0.5*CMStable.log10rhogrid + np.log10(CMStable.atomic_number) - (5./3)*np.log10(CMStable.mass_number)
+            mask = (CMStable.log10Tgrid < boundary) #| (CMStable.log10Tgrid < 2.3) | (CMStable.log10rhogrid < -7.7)
         elif species=='Z' or species=='None':
             boundary = 0
             mask = (CMStable.log10Tgrid < boundary)
@@ -1435,11 +1607,11 @@ def consistency_metrics(CMStable,P,S,E,species='H',maskUnphysicalRegion=True,plo
         if species=='H':
             # hydrogen table
             boundary = 3.3 + 0.5*CMStable.log10rhogrid + np.log10(CMStable.atomic_number) - (5./3)*np.log10(CMStable.mass_number)
-            mask = (CMStable.log10Tgrid < boundary) | (CMStable.log10rhogrid < -7.9)
+            mask = (CMStable.log10Tgrid < boundary) #| (CMStable.log10rhogrid < -7.9)
         elif species=='He':  
             # helium table
             boundary = 3.3 + 0.5*CMStable.log10rhogrid + np.log10(CMStable.atomic_number) - (5./3)*np.log10(CMStable.mass_number)
-            mask = (CMStable.log10Tgrid < boundary) | (CMStable.log10Tgrid < 2.3) | (CMStable.log10rhogrid < -7.7)
+            mask = (CMStable.log10Tgrid < boundary) #| (CMStable.log10Tgrid < 2.3) | (CMStable.log10rhogrid < -7.7)
         elif species=='Z' or species=='None':
             boundary = 3.3 + 0.5*CMStable.log10rhogrid + np.log10(CMStable.atomic_number) - (5./3)*np.log10(CMStable.mass_number)
             mask = (CMStable.log10Tgrid < boundary)
@@ -1458,21 +1630,21 @@ def consistency_metrics(CMStable,P,S,E,species='H',maskUnphysicalRegion=True,plo
         
         divider0 = make_axes_locatable(axes[0])
         cax0 = divider0.append_axes('right', size='5%', pad=0.05)
-        cs0 = axes[0].pcolormesh(meshgrid_rho, meshgrid_T, np.log10(np.abs(dpe)), cmap=cmap, shading='nearest',vmin=-5,vmax=0)
+        cs0 = axes[0].pcolormesh(meshgrid_rho, meshgrid_T, np.log10(np.abs(dpe)), cmap=cmap, shading='nearest',vmin=-7,vmax=0)
         cb0 = fig.colorbar(cs0, cax=cax0, orientation='vertical',label=r'$\log_{10}{|\mathrm{dpe}|}$')
         cb0.set_label(label=r'$\log_{10}{|\mathrm{dpe}|}$',size=25)
         cb0.ax.tick_params(labelsize=25) 
         
         divider1 = make_axes_locatable(axes[1])
         cax1 = divider1.append_axes('right', size='5%', pad=0.05)
-        cs1 = axes[1].pcolormesh(meshgrid_rho, meshgrid_T, np.log10(np.abs(dse)), cmap=cmap, shading='nearest',vmin=-5,vmax=0)
+        cs1 = axes[1].pcolormesh(meshgrid_rho, meshgrid_T, np.log10(np.abs(dse)), cmap=cmap, shading='nearest',vmin=-7,vmax=0)
         cb1 = fig.colorbar(cs1, cax=cax1, orientation='vertical',label=r'$\log_{10}{|\mathrm{dse}|}$')
         cb1.set_label(label=r'$\log_{10}{|\mathrm{dse}|}$',size=25)
         cb1.ax.tick_params(labelsize=25) 
 
         divider2 = make_axes_locatable(axes[2])
         cax2 = divider2.append_axes('right', size='5%', pad=0.05)
-        cs2 = axes[2].pcolormesh(meshgrid_rho, meshgrid_T, np.log10(np.abs(dsp)), cmap=cmap, shading='nearest',vmin=-5,vmax=0)
+        cs2 = axes[2].pcolormesh(meshgrid_rho, meshgrid_T, np.log10(np.abs(dsp)), cmap=cmap, shading='nearest',vmin=-7,vmax=0)
         cb2 = fig.colorbar(cs2, cax=cax2, orientation='vertical',label=r'$\log_{10}{|\mathrm{dsp}|}$')
         cb2.set_label(label=r'$\log_{10}{|\mathrm{dsp}|}$',size=25)
         cb2.ax.tick_params(labelsize=25) 
@@ -1494,7 +1666,7 @@ def consistency_metrics(CMStable,P,S,E,species='H',maskUnphysicalRegion=True,plo
         plt.subplots_adjust(wspace=0.3)
 
         if savename is not None:
-            plt.savefig("{0}".format(figtitle),bbox_inches='tight')
+            plt.savefig("{0}".format(savename),bbox_inches='tight')
         else:
             plt.show()
 
@@ -1502,11 +1674,7 @@ def consistency_metrics(CMStable,P,S,E,species='H',maskUnphysicalRegion=True,plo
 
 def format_e(n):
     a = '%E' % n
-    return a.split('E')[0].rstrip('0').rstrip('.') + 'E' + a.split('E')[1]
-
-def calculate_F(table):
-
-    return 
+    return a.split('E')[0].rstrip('0').rstrip('.') + 'E' + a.split('E')[1] 
 
 def load_simplified_planet_profile(filename):
 
