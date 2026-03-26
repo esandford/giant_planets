@@ -20,13 +20,13 @@ import os
 import shutil
 import copy
 
-__all__ = ['read_MESAtable','reshapeQTgrid','fill_in_nans','calc_F_derived_quantities','compute_F',\
+__all__ = ['read_MESAtable','reshapeQTgrid','fill_in_nans','fill_in_nans_QT','calc_F_derived_quantities','compute_F',\
 'simple_table','interpolated_PTtable','MESAtable', 'SCVHtable',\
  'CMStable', 'CEPAMtable', 'mazevet2022table', \
 'boundary_mask_rhoT', 'boundary_mask_PT', 'finite_difference_dlrho', 'finite_difference_dlT', \
-'plot_PSE', 'interpolate_problematic_values', 'contourf_sublots_with_colorbars',  \
+'plot_PSE', 'interpolate_problematic_values', 'contourf_subplots_with_colorbars',  \
 'finite_difference', 'finite_difference_PSE', 'consistency_metrics', \
-'format_e', 'load_simplified_planet_profile','load_sample_planet_profiles', 'along_profile']
+'format_e','MESA_format_e', 'load_simplified_planet_profile','load_sample_planet_profiles', 'along_profile']
   
 def read_MESAtable(filename):
     """
@@ -70,7 +70,7 @@ def read_MESAtable(filename):
     return tableData
 
 
-def reshapeQTgrid(QTgrid,lower_logRho_bound,upper_logRho_bound,rounding=2):
+def reshapeQTgrid(QTgrid,lower_logRho_bound,upper_logRho_bound,rounding=2,make_table_object=True):
     '''
     rearrange MESA table back into a logrho, logT grid
     '''
@@ -103,16 +103,29 @@ def reshapeQTgrid(QTgrid,lower_logRho_bound,upper_logRho_bound,rounding=2):
                 Trhogrid[i, j, :] = np.nan
                 Trhogrid[i, j, 0] = T
                 Trhogrid[i, j, -1] = rho
-            
-    return Trhogrid
+    
+    Trhogrid = np.swapaxes(Trhogrid,0,1)
+
+    if make_table_object is True:
+        #logT   logPgas      logE      logS        chiRho          chiT            Cp            Cv       dE_dRho         dS_dT       dS_dRho       mu log_free_e    gamma1    gamma3   grad_ad       eta
+
+        table = simple_table()
+        table.log10rhogrid = Trhogrid[:,:,-1]
+        table.log10Tgrid = Trhogrid[:,:,0]
+        table.log10Pgrid = Trhogrid[:,:,1]
+        table.log10Egrid = Trhogrid[:,:,2]
+        table.log10Sgrid = Trhogrid[:,:,3]
+        return Trhogrid, table
+    else:
+        return Trhogrid
 
 
 def fill_in_nans(grid, table, fill_value=np.nan):
     """
-    fill in nans in chosen grid belonging to (rho,T) parameterized table
+    fill in nans & infs in chosen grid belonging to (rho,T) parameterized table
     """
 
-    nonans = ~np.isnan(grid)
+    nonans = np.isfinite(grid)
     
     Ts = np.ravel(table.log10Tgrid[nonans])
     rhos = np.ravel(table.log10rhogrid[nonans])
@@ -124,7 +137,172 @@ def fill_in_nans(grid, table, fill_value=np.nan):
     interp_fn = interpolate.LinearNDInterpolator(coords, values, fill_value=fill_value)
     
     interp_grid = interp_fn(table.log10Tgrid, table.log10rhogrid)
+
+    n_nans_left = len(interp_grid[~np.isfinite(interp_grid)])
+    n_iter = 0
+    while n_nans_left > 0:
+        
+        ii, jj = np.meshgrid(np.arange(np.shape(grid)[1]),np.arange(np.shape(grid)[0]))
+        
+        i_arr = ii[~np.isfinite(interp_grid)]
+        j_arr = jj[~np.isfinite(interp_grid)]
+
+        for k in range(n_nans_left):
+            i_ = i_arr[k]
+            j_ = j_arr[k]
+
+            neighbors = []
+            try:
+                neighbors.append(interp_grid[j_-1,i_])
+            except IndexError:
+                 pass
+            try:
+                neighbors.append(interp_grid[j_+1,i_])
+            except IndexError:
+                pass
+            try:
+                neighbors.append(interp_grid[j_,i_-1])
+            except IndexError:
+                pass
+            try:
+                neighbors.append(interp_grid[j_,i_+1])
+            except IndexError:
+                pass
+
+            #print(neighbors)
+            neighbors = np.array(neighbors)
+
+            finite_neighbors = neighbors[np.isfinite(neighbors)]
+            
+            n_finite_neighbors = len(finite_neighbors)
+            #print(n_finite_neighbors)
+
+            if n_finite_neighbors > 0:
+                interp_grid[j_,i_] = np.mean(finite_neighbors)
+        
+        n_nans_left = len(interp_grid[~np.isfinite(interp_grid)])
+        n_iter += 1
     
+    return interp_grid
+
+def fill_in_nans_QT(grid, table, fill_value=np.nan, extrapolation_row_idxs=None, extrapolation_col_idxs=None):
+    """
+    fill in nans & infs in chosen grid belonging to (Q,T) parameterized table
+    """
+    '''
+    nonans = np.isfinite(grid)
+    
+    Ts = np.ravel(table.log10Tgrid_QT[nonans])
+    Qs = np.ravel(table.log10Qgrid_QT[nonans])
+    coords = np.vstack((Ts,Qs)).T
+    
+    
+    values = np.ravel(grid[nonans])
+    
+    interp_fn = interpolate.LinearNDInterpolator(coords, values, fill_value=fill_value)
+    
+    interp_grid = interp_fn(table.log10Tgrid_QT, table.log10Qgrid_QT)
+    '''
+
+    Qarr = np.arange(-12.0,5.44,0.05)
+    Tarr = np.arange(2.0,8.04,0.05)
+
+    grid_to_interpolate = grid
+
+    if extrapolation_row_idxs is not None:
+        r0 = extrapolation_row_idxs[0]
+        r1 = extrapolation_row_idxs[1]
+        Tarr = Tarr[r0:r1]
+        grid_to_interpolate = grid[r0:r1]
+
+    if extrapolation_col_idxs is not None:
+        c0 = extrapolation_col_idxs[0]
+        c1 = extrapolation_col_idxs[1]
+        Qarr = Qarr[c0:c1]
+        grid_to_interpolate = grid_to_interpolate[:,c0:c1]
+
+    interp_fn = interpolate.RegularGridInterpolator(points=(Tarr,Qarr), values=grid_to_interpolate, bounds_error=False, fill_value=None, method='linear')
+    
+    interp_grid = interp_fn((table.log10Tgrid_QT,table.log10Qgrid_QT))
+
+    if len(interp_grid[~np.isfinite(interp_grid)]) is not None:
+        nonans = np.isfinite(interp_grid)
+    
+        Ts = np.ravel(table.log10Tgrid_QT[nonans])
+        Qs = np.ravel(table.log10Qgrid_QT[nonans])
+        coords = np.vstack((Ts,Qs)).T
+        
+        
+        values = np.ravel(interp_grid[nonans])
+        
+        interp_fn = interpolate.LinearNDInterpolator(coords, values, fill_value=fill_value)
+        
+        interp_grid = interp_fn(table.log10Tgrid_QT, table.log10Qgrid_QT)
+        
+    # if that still hasn't worked (i.e., if there are nans left outside the convex hull of the input points):
+    n_nans_left = len(interp_grid[~np.isfinite(interp_grid)])
+
+    n_iter = 0
+    while n_nans_left > 0:
+        #print("iteration number {0}".format(n_iter))
+        #print(n_nans_left)
+        '''
+        contourf_subplots_with_colorbars(nRow=1, nCol=1, 
+                                    xs=table.log10Qgrid_QT,
+                                    ys=table.log10Tgrid_QT,
+                                    zs=interp_grid,
+                                    xlims=(-12,5.4),
+                                    ylims=(2,8),
+                                    zlims=None,
+                                    levels=20,
+                                    xlabels=r'$log_{10}Q$',
+                                    ylabels=r'$log_{10}T$',
+                                    zlabels='interp_grid',
+                                    cmap='magma', vlines=None, hlines=None, otherlines_x=None, otherlines_y=None, 
+                                    species='H', plot_interpolation_lines=False, savename=None)
+        '''
+        ii, jj = np.meshgrid(np.arange(len(Qarr)),np.arange(len(Tarr)))
+        
+        i_arr = ii[~np.isfinite(interp_grid)]
+        j_arr = jj[~np.isfinite(interp_grid)]
+
+        for k in range(n_nans_left):
+            i_ = i_arr[k]
+            j_ = j_arr[k]
+
+            neighbors = []
+            try:
+                neighbors.append(interp_grid[j_-1,i_])
+            except IndexError:
+                 pass
+            try:
+                neighbors.append(interp_grid[j_+1,i_])
+            except IndexError:
+                pass
+            try:
+                neighbors.append(interp_grid[j_,i_-1])
+            except IndexError:
+                pass
+            try:
+                neighbors.append(interp_grid[j_,i_+1])
+            except IndexError:
+                pass
+
+            #print(neighbors)
+            neighbors = np.array(neighbors)
+
+            finite_neighbors = neighbors[np.isfinite(neighbors)]
+            
+            n_finite_neighbors = len(finite_neighbors)
+            #print(n_finite_neighbors)
+
+            if n_finite_neighbors > 0:
+                interp_grid[j_,i_] = np.mean(finite_neighbors)
+        
+        n_nans_left = len(interp_grid[~np.isfinite(interp_grid)])
+        #print(n_nans_left)
+        n_iter += 1
+
     return interp_grid
 
 def calc_F_derived_quantities(Fgrid, table):
@@ -246,6 +424,17 @@ class simple_table(object):
         self.F_log10Sgrid = np.log10(self.F_Sgrid)
         self.F_log10Egrid = np.log10(self.F_Egrid)
 
+    def compute_partials(self,species='H'):
+        self.dP_drho, self.dS_drho, self.dE_drho, self.dP_dT, self.dS_dT, self.dE_dT = finite_difference_PSE(self, 10**self.log10Pgrid, 10**self.log10Sgrid, 10**self.log10Egrid, species=species, maskUnphysicalRegion=False, plot=False, savename=None)
+        
+        self.chiRho = self.dP_drho * (10**self.log10rhogrid/10**self.log10Pgrid)
+        self.dlS_dlrho_T = self.dS_drho * (10**self.log10rhogrid/10**self.log10Sgrid)
+        self.dlE_dlrho_T = self.dE_drho * (10**self.log10rhogrid/10**self.log10Egrid)
+
+        self.chiT = self.dP_dT * (10**self.log10Tgrid/10**self.log10Pgrid)
+        self.dlS_dlT_rho = self.dS_dT * (10**self.log10Tgrid/10**self.log10Sgrid)
+
+
 class interpolated_PTtable(object):
     '''
     For holding a (rho, T) table interpolated into (P, T) coordinates
@@ -304,7 +493,7 @@ class interpolated_PTtable(object):
         rbs_log10S = interpolate.RectBivariateSpline(start_rhoarr, start_Tarr, masked_S, kx=5,ky=5)
         rbs_log10U = interpolate.RectBivariateSpline(start_rhoarr, start_Tarr, masked_U, kx=5,ky=5)
 
-        def interp_log10P(log10rho, log10T, method='slinear'):
+        def interp_log10P(log10rho, log10T, method='linear'):
             if method == 'cubic':
                 return interp_log10P_given_log10rho_log10T_cubic((log10rho,log10T))
                 #return rbs_log10P(log10rho,log10T)
@@ -313,7 +502,7 @@ class interpolated_PTtable(object):
             elif method == 'linear':
                 return interp_log10P_given_log10rho_log10T_linear((log10rho,log10T))
         
-        def log10P_abs_diff(log10rho, log10P, log10T, method='slinear'):
+        def log10P_abs_diff(log10rho, log10P, log10T, method='linear'):
             return np.abs(log10P - interp_log10P(log10rho,log10T,method))
 
 
@@ -327,7 +516,7 @@ class interpolated_PTtable(object):
         interp_log10U_given_log10rho_log10T_linear = interpolate.RegularGridInterpolator(points=(start_rhoarr, start_Tarr), values=masked_U, bounds_error=False, fill_value=None, method='linear')
         
         
-        def interp_log10S(log10rho, log10T, method='slinear'):
+        def interp_log10S(log10rho, log10T, method='linear'):
             if method == 'cubic':
                 return interp_log10S_given_log10rho_log10T_cubic((log10rho,log10T))
                 #return rbs_log10S(log10rho,log10T)
@@ -336,7 +525,7 @@ class interpolated_PTtable(object):
             elif method == 'linear':
                 return interp_log10S_given_log10rho_log10T_linear((log10rho,log10T))
         
-        def interp_log10U(log10rho, log10T, method='slinear'):
+        def interp_log10U(log10rho, log10T, method='linear'):
             if method == 'cubic':
                 return interp_log10U_given_log10rho_log10T_cubic((log10rho,log10T))
                 #return rbs_log10U(log10rho,log10T)
@@ -346,7 +535,7 @@ class interpolated_PTtable(object):
                 return interp_log10U_given_log10rho_log10T_linear((log10rho,log10T))
         
         
-        def solve_log10rhoSU(log10P, log10T, log10rho0=-5., method='slinear'):
+        def solve_log10rhoSU(log10P, log10T, log10rho0=-5., method='linear'):
             opt = optimize.minimize(log10P_abs_diff, x0=log10rho0, args=(log10P,log10T,method),bounds=[(-8.05,6.05)], tol=1.e-10) #lower and upper bounds on rho come from np.min, max of np.log10(maz_cepam_rhogrid)
             opt_log10rho = opt.x[0]
         
@@ -366,8 +555,7 @@ class interpolated_PTtable(object):
             for j in range(np.shape(self.log10Pgrid)[0]):
                 this_log10P = self.log10Pgrid[:,0][j]
         
-                # try cubic interpolation first
-                interpolated_log10rho, interpolated_log10S, interpolated_log10U  = solve_log10rhoSU(log10P=this_log10P, log10T=this_log10T, log10rho0=-5, method='slinear')
+                interpolated_log10rho, interpolated_log10S, interpolated_log10U  = solve_log10rhoSU(log10P=this_log10P, log10T=this_log10T, log10rho0=-5, method='linear')
         
                 log10rhogrid_interpolated[j,i] = interpolated_log10rho
                 log10Sgrid_interpolated[j,i] = interpolated_log10S
@@ -377,7 +565,19 @@ class interpolated_PTtable(object):
         self.log10Sgrid = log10Sgrid_interpolated
         self.log10Ugrid = log10Ugrid_interpolated
         self.log10Egrid = self.log10Ugrid
-
+        '''
+        # nans after change of basis to (P,T)?
+        print("nans after change of basis to (P,T)?")
+        print("P")
+        print(self.log10Pgrid[~np.isfinite(self.log10rhogrid)])
+        print(self.log10Pgrid[~np.isfinite(self.log10rhogrid)])
+        print("T")
+        print(self.log10Tgrid[~np.isfinite(self.log10rhogrid)])
+        print(self.log10Tgrid[~np.isfinite(self.log10rhogrid)])
+        print("rho")
+        print(self.log10rhogrid[~np.isfinite(self.log10rhogrid)])
+        print(self.log10rhogrid[~np.isfinite(self.log10rhogrid)])
+        '''
 
 class CEPAMtable(object):
     '''
@@ -446,9 +646,7 @@ class CEPAMtable(object):
             self.log10rhogrid[:,i] = self.eosData[:,2][i*nP : (i+1)*nP]
             self.log10Sgrid[:,i] = self.eosData[:,3][i*nP : (i+1)*nP]
 
-        
-        self.log10Egrid = self.log10Ugrid
-        
+                
 
 class MESAtable(object):
     '''
@@ -905,6 +1103,16 @@ class CMStable(object):
         self.F_log10Sgrid = np.log10(self.F_Sgrid)
         self.F_log10Egrid = np.log10(self.F_Egrid)
 
+    def compute_partials(self,species='H'):
+        self.dP_drho, self.dS_drho, self.dE_drho, self.dP_dT, self.dS_dT, self.dE_dT = finite_difference_PSE(self, 10**self.log10Pgrid, 10**self.log10Sgrid, 10**self.log10Egrid, species=species, maskUnphysicalRegion=False, plot=False, savename=None)
+
+        self.chiRho = self.dP_drho * (10**self.log10rhogrid/10**self.log10Pgrid)
+        self.dlS_dlrho_T = self.dS_drho * (10**self.log10rhogrid/10**self.log10Sgrid)
+        self.dlE_dlrho_T = self.dE_drho * (10**self.log10rhogrid/10**self.log10Egrid)
+
+        self.chiT = self.dP_dT * (10**self.log10Tgrid/10**self.log10Pgrid)
+        self.dlS_dlT_rho = self.dS_dT * (10**self.log10Tgrid/10**self.log10Sgrid)
+
     
 class mazevet2022table(object):
     # expected columns:  
@@ -1133,7 +1341,7 @@ def plot_PSE(CMStable, P, S, E, plot_tracks=False):
 #print(cms19_He.log10rhogrid[200])
 #print(cms19_He.log10Tgrid[:,80])
 
-def interpolate_problematic_values(CMStable, bad_rho_idxs=None, bad_T_idxs=None):
+def interpolate_problematic_values(CMStable, bad_rho_idxs=None, bad_T_idxs=None,method='linear'):
 
     log10rho = CMStable.log10rhogrid
     log10T = CMStable.log10Tgrid
@@ -1171,9 +1379,9 @@ def interpolate_problematic_values(CMStable, bad_rho_idxs=None, bad_T_idxs=None)
     masked_S = masked_S[~np.isnan(masked_S)].reshape((len(grid_log10rho_masked),len(grid_log10T_masked)))
     masked_E = masked_E[~np.isnan(masked_E)].reshape((len(grid_log10rho_masked),len(grid_log10T_masked)))
     
-    interp_P = interpolate.RegularGridInterpolator(points=(grid_log10rho_masked, grid_log10T_masked), values=masked_P, bounds_error=False, fill_value=None, method='cubic')
-    interp_S = interpolate.RegularGridInterpolator(points=(grid_log10rho_masked, grid_log10T_masked), values=masked_S, bounds_error=False, fill_value=None, method='cubic')
-    interp_E = interpolate.RegularGridInterpolator(points=(grid_log10rho_masked, grid_log10T_masked), values=masked_E, bounds_error=False, fill_value=None, method='cubic')
+    interp_P = interpolate.RegularGridInterpolator(points=(grid_log10rho_masked, grid_log10T_masked), values=masked_P, bounds_error=False, fill_value=None, method=method)
+    interp_S = interpolate.RegularGridInterpolator(points=(grid_log10rho_masked, grid_log10T_masked), values=masked_S, bounds_error=False, fill_value=None, method=method)
+    interp_E = interpolate.RegularGridInterpolator(points=(grid_log10rho_masked, grid_log10T_masked), values=masked_E, bounds_error=False, fill_value=None, method=method)
 
     new_P = interp_P((log10rho, log10T))
     new_S = interp_S((log10rho, log10T))
@@ -1182,7 +1390,7 @@ def interpolate_problematic_values(CMStable, bad_rho_idxs=None, bad_T_idxs=None)
     return new_P, new_S, new_E
 
 
-def contourf_sublots_with_colorbars(nRow, nCol, xs, ys, zs, xlims, ylims, zlims, levels, xlabels, ylabels, zlabels, cmap='magma', vlines=None, hlines=None, otherlines_x=None, otherlines_y=None, species='H', plot_interpolation_lines=True, savename=None):
+def contourf_subplots_with_colorbars(nRow, nCol, xs, ys, zs, xlims, ylims, zlims, levels, xlabels, ylabels, zlabels, cmap='magma', vlines=None, hlines=None, otherlines_x=None, otherlines_y=None, species='H', plot_interpolation_lines=True, savename=None):
     
     if not isinstance(xs, list):
         xs_list = []
@@ -1287,7 +1495,7 @@ def contourf_sublots_with_colorbars(nRow, nCol, xs, ys, zs, xlims, ylims, zlims,
 
             if otherlines_x is not None:
                 for k,x in enumerate(otherlines_x):
-                    axes[i,j].plot(otherlines_x[k],otherlines_y[k],ls='-',color='#7FFF00')
+                    axes[i,j].plot(otherlines_x[k],otherlines_y[k],ls='-',color='#7FFF00',zorder=5)
 
             if plot_interpolation_lines is True:
                 if species == 'H':
@@ -1330,27 +1538,32 @@ def finite_difference(grid, log10rhogrid, log10Tgrid, order=6):
     # derivs wrt rho at fixed T
     between_rho = grid_rho[int(order/2):-int(order/2)]
     between_log10rho = grid_log10rho[int(order/2):-int(order/2)]
-
+    
     d_drho_btwn_rho_grid_points = np.zeros((nrho-int(order),nT))
 
     if order == 2:
         for i in range(1, nrho - 1): # number of unique rho values = 281
             d_drho_btwn_rho_grid_points[i-1] = (grid[i+1] - grid[i-1])/(log10rho[i+1] - log10rho[i-1])
-    
-
+                        
     elif order == 4:    
         for i in range(2, nrho - 2): # number of unique rho values = 281
-            d_drho_btwn_rho_grid_points[i-2] = ((-1/12.)*grid[i+2] + (2/3.)*grid[i+1] - (2/3.)*grid[i-1] + (1/12.)*grid[i-2])/((-1/12.)*log10rho[i+2] + (2/3.)*log10rho[i+1] - (2/3.)*log10rho[i-1] + (1/12.)*log10rho[i-2]) 
+            #d_drho_btwn_rho_grid_points[i-2] = ((-1/12.)*grid[i+2] + (2/3.)*grid[i+1] - (2/3.)*grid[i-1] + (1/12.)*grid[i-2])/((-1/12.)*log10rho[i+2] + (2/3.)*log10rho[i+1] - (2/3.)*log10rho[i-1] + (1/12.)*log10rho[i-2]) 
+            d_drho_btwn_rho_grid_points[i-2] = ((-1/12.)*grid[i+2] + (2/3.)*grid[i+1] - (2/3.)*grid[i-1] + (1/12.)*grid[i-2])/(0.5*(log10rho[i+1] - log10rho[i-1]))
     
     elif order == 6: 
         for i in range(3, nrho - 3): # number of unique rho values = 281
+            #d_drho_btwn_rho_grid_points[i-3] = (((-1/60.)*grid[i-3] + (3/20.)*grid[i-2] - (3/4.)*grid[i-1] + (3/4.)*grid[i+1] - (3/20.)*grid[i+2] + (1/60.)*grid[i+3])/
+            #    ((-1/60.)*log10rho[i-3] + (3/20.)*log10rho[i-2] - (3/4.)*log10rho[i-1] + (3/4.)*log10rho[i+1] - (3/20.)*log10rho[i+2] + (1/60.)*log10rho[i+3]))
             d_drho_btwn_rho_grid_points[i-3] = (((-1/60.)*grid[i-3] + (3/20.)*grid[i-2] - (3/4.)*grid[i-1] + (3/4.)*grid[i+1] - (3/20.)*grid[i+2] + (1/60.)*grid[i+3])/
-                ((-1/60.)*log10rho[i-3] + (3/20.)*log10rho[i-2] - (3/4.)*log10rho[i-1] + (3/4.)*log10rho[i+1] - (3/20.)*log10rho[i+2] + (1/60.)*log10rho[i+3]))
+                (0.5*(log10rho[i+1] - log10rho[i-1])))
     
     elif order == 8:
         for i in range(4, nrho - 4): # number of unique rho values = 281
+            #d_drho_btwn_rho_grid_points[i-4] = (((1/280.)*grid[i-4] + (-4/105.)*grid[i-3] + (1/5.)*grid[i-2] + (-4/5.)*grid[i-1] + (4/5.)*grid[i+1] + (-1/5.)*grid[i+2] + (4/105.)*grid[i+3] + (-1/280.)*grid[i+4])/
+            #    ((1/280.)*log10rho[i-4] + (-4/105.)*log10rho[i-3] + (1/5.)*log10rho[i-2] + (-4/5.)*log10rho[i-1] + (4/5.)*log10rho[i+1] + (-1/5.)*log10rho[i+2] + (4/105.)*log10rho[i+3] + (-1/280.)*log10rho[i+4]))
+            
             d_drho_btwn_rho_grid_points[i-4] = (((1/280.)*grid[i-4] + (-4/105.)*grid[i-3] + (1/5.)*grid[i-2] + (-4/5.)*grid[i-1] + (4/5.)*grid[i+1] + (-1/5.)*grid[i+2] + (4/105.)*grid[i+3] + (-1/280.)*grid[i+4])/
-                ((1/280.)*log10rho[i-4] + (-4/105.)*log10rho[i-3] + (1/5.)*log10rho[i-2] + (-4/5.)*log10rho[i-1] + (4/5.)*log10rho[i+1] + (-1/5.)*log10rho[i+2] + (4/105.)*log10rho[i+3] + (-1/280.)*log10rho[i+4]))
+                (0.5*(log10rho[i+1] - log10rho[i-1])))
         
     # bounds_error = False, fill_value = None should allow the entries on the edges of the grid to be extrapolated.
     interp_d_drho_given_log10rho_log10T = interpolate.RegularGridInterpolator(points=(between_log10rho, grid_log10T), values=d_drho_btwn_rho_grid_points, bounds_error=False, fill_value=None, method='linear')
@@ -1371,20 +1584,25 @@ def finite_difference(grid, log10rhogrid, log10Tgrid, order=6):
     if order == 2:
         for j in range(1, nT - 1): # number of unique T values = 121
             d_dT_btwn_T_grid_points[:,j-1] = (grid[:,j+1] - grid[:,j-1])/(log10T[:,j+1] - log10T[:,j-1])
-    
+                
     elif order == 4:
         for j in range(2, nT - 2): # number of unique T values = 121
-            d_dT_btwn_T_grid_points[:,j-2] = ((-1/12.)*grid[:,j+2] + (2/3.)*grid[:,j+1] - (2/3.)*grid[:,j-1] + (1/12.)*grid[:,j-2])/((-1/12.)*log10T[:,j+2] + (2/3.)*log10T[:,j+1] - (2/3.)*log10T[:,j-1] + (1/12.)*log10T[:,j-2])
+            #d_dT_btwn_T_grid_points[:,j-2] = ((-1/12.)*grid[:,j+2] + (2/3.)*grid[:,j+1] - (2/3.)*grid[:,j-1] + (1/12.)*grid[:,j-2])/((-1/12.)*log10T[:,j+2] + (2/3.)*log10T[:,j+1] - (2/3.)*log10T[:,j-1] + (1/12.)*log10T[:,j-2])
+            d_dT_btwn_T_grid_points[:,j-2] = ((-1/12.)*grid[:,j+2] + (2/3.)*grid[:,j+1] - (2/3.)*grid[:,j-1] + (1/12.)*grid[:,j-2])/(0.5*(log10T[:,j+1] - log10T[:,j-1]))
     
     elif order == 6:
         for j in range(3, nT - 3): # number of unique T values = 121
+            #d_dT_btwn_T_grid_points[:,j-3] = (((-1/60.)*grid[:,j-3] + (3/20.)*grid[:,j-2] - (3/4.)*grid[:,j-1] + (3/4.)*grid[:,j+1] - (3/20.)*grid[:,j+2] + (1/60.)*grid[:,j+3])/
+            #    ((-1/60.)*log10T[:,j-3] + (3/20.)*log10T[:,j-2] - (3/4.)*log10T[:,j-1] + (3/4.)*log10T[:,j+1] - (3/20.)*log10T[:,j+2] + (1/60.)*log10T[:,j+3]))
             d_dT_btwn_T_grid_points[:,j-3] = (((-1/60.)*grid[:,j-3] + (3/20.)*grid[:,j-2] - (3/4.)*grid[:,j-1] + (3/4.)*grid[:,j+1] - (3/20.)*grid[:,j+2] + (1/60.)*grid[:,j+3])/
-                ((-1/60.)*log10T[:,j-3] + (3/20.)*log10T[:,j-2] - (3/4.)*log10T[:,j-1] + (3/4.)*log10T[:,j+1] - (3/20.)*log10T[:,j+2] + (1/60.)*log10T[:,j+3]))
+                (0.5*(log10T[:,j+1] - log10T[:,j-1])))
     
     elif order == 8:
         for j in range(4, nT - 4): # number of unique T values = 121
+            #d_dT_btwn_T_grid_points[:,j-4] = (((1/280.)*grid[:,j-4] + (-4/105.)*grid[:,j-3] + (1/5.)*grid[:,j-2] + (-4/5.)*grid[:,j-1] + (4/5.)*grid[:,j+1] + (-1/5.)*grid[:,j+2] + (4/105.)*grid[:,j+3] + (-1/280.)*grid[:,j+4])/
+            #    ((1/280.)*log10T[:,j-4] + (-4/105.)*log10T[:,j-3] + (1/5.)*log10T[:,j-2] + (-4/5.)*log10T[:,j-1] + (4/5.)*log10T[:,j+1] + (-1/5.)*log10T[:,j+2] + (4/105.)*log10T[:,j+3] + (-1/280.)*log10T[:,j+4]))
             d_dT_btwn_T_grid_points[:,j-4] = (((1/280.)*grid[:,j-4] + (-4/105.)*grid[:,j-3] + (1/5.)*grid[:,j-2] + (-4/5.)*grid[:,j-1] + (4/5.)*grid[:,j+1] + (-1/5.)*grid[:,j+2] + (4/105.)*grid[:,j+3] + (-1/280.)*grid[:,j+4])/
-                ((1/280.)*log10T[:,j-4] + (-4/105.)*log10T[:,j-3] + (1/5.)*log10T[:,j-2] + (-4/5.)*log10T[:,j-1] + (4/5.)*log10T[:,j+1] + (-1/5.)*log10T[:,j+2] + (4/105.)*log10T[:,j+3] + (-1/280.)*log10T[:,j+4]))
+                (0.5*(log10T[:,j+1] - log10T[:,j-1])))
     
     # extrapolate to the 0th, 1st, -2th, -1th columns
     interp_d_dT_given_log10rho_log10T = interpolate.RegularGridInterpolator(points=(grid_log10rho, between_log10T), values=d_dT_btwn_T_grid_points, bounds_error=False, fill_value=None, method='linear')
@@ -1454,7 +1672,7 @@ def finite_difference_PSE(CMStable, P, S, E, species = 'H', maskUnphysicalRegion
             plot_line_y = 3.3 + (1./2.)*plot_line_x + np.log10(CMStable.atomic_number) - (5./3)*np.log10(CMStable.mass_number)
         except TypeError:
             plot_line_y = -2*np.ones_like(plot_line_x)
-        contourf_sublots_with_colorbars(nRow=2, nCol=3, 
+        contourf_subplots_with_colorbars(nRow=2, nCol=3, 
                                 xs=log10rho,
                                 ys=log10T,
                                 zs=[np.log10(dP_drho),np.log10(-1*dS_drho),np.log10(np.abs(dE_drho)),np.log10(dP_dT),np.log10(dS_dT),np.log10(dE_dT)],
@@ -1569,7 +1787,7 @@ def consistency_metrics(CMStable,P,S,E,order=6,species='H',maskUnphysicalRegion=
         except TypeError:
             plot_line_y = -2*np.ones_like(plot_line_x)
         if plot_tracks is False:
-            contourf_sublots_with_colorbars(nRow=3, nCol=3, 
+            contourf_subplots_with_colorbars(nRow=3, nCol=3, 
                                     xs=log10rho,
                                     ys=log10T,
                                     zs=[dpe, dse, dsp, np.log10(a),np.log10(b) ,np.log10(c),np.log10(-1*a),np.log10(-1*b) ,np.log10(-1*c)],
@@ -1584,7 +1802,7 @@ def consistency_metrics(CMStable,P,S,E,order=6,species='H',maskUnphysicalRegion=
         else:
             profiles = load_sample_planet_profiles(Minit=np.array((1.09,7.59,20.0)), Rinit=2.0, Zinit=0.025, comps=['uniform','inert_core'], Sinit=np.array((9.0,11.0)), alphas=2.0, ages=np.array((1.e6,1.e10)))
 
-            contourf_sublots_with_colorbars(nRow=3, nCol=3, 
+            contourf_subplots_with_colorbars(nRow=3, nCol=3, 
                                     xs=log10rho,
                                     ys=log10T,
                                     zs=[dpe, dse, dsp, np.log10(a),np.log10(b) ,np.log10(c),np.log10(-1*a),np.log10(-1*b) ,np.log10(-1*c)],
@@ -1660,9 +1878,9 @@ def consistency_metrics(CMStable,P,S,E,order=6,species='H',maskUnphysicalRegion=
                 for prof in profiles:
                     ax.plot(prof['logRho'], prof['logT'],ls='-',color='#7FFF00')
         axes[0].set_ylabel(r'$\log_{10}{T\ [\mathrm{K}]}$',fontsize=35)
-        #axes[0].set_title('{0} '.format(eosname)+r'$\log_{10}{\mathrm{dpe}}$',fontsize=20)
-        #axes[1].set_title('{0} '.format(eosname)+r'$\log_{10}{\mathrm{dse}}$',fontsize=20)
-        #axes[2].set_title('{0} '.format(eosname)+r'$\log_{10}{\mathrm{dsp}}$',fontsize=20)
+        #axes[0].set_title('{0} '.format(eosname)+r'$log_{10}{\mathrm{dpe}}$',fontsize=20)
+        #axes[1].set_title('{0} '.format(eosname)+r'$log_{10}{\mathrm{dse}}$',fontsize=20)
+        #axes[2].set_title('{0} '.format(eosname)+r'$log_{10}{\mathrm{dsp}}$',fontsize=20)
         plt.subplots_adjust(wspace=0.3)
 
         if savename is not None:
@@ -1675,6 +1893,12 @@ def consistency_metrics(CMStable,P,S,E,order=6,species='H',maskUnphysicalRegion=
 def format_e(n):
     a = '%E' % n
     return a.split('E')[0].rstrip('0').rstrip('.') + 'E' + a.split('E')[1] 
+
+def MESA_format_e(n):
+    a = '%E' % n
+    firsthalf = a.split('E')[0].rstrip('0').rstrip('.')
+    firsthalf = firsthalf[0:7]
+    return firsthalf + 'E' + a.split('E')[1]
 
 def load_simplified_planet_profile(filename):
 
@@ -1729,7 +1953,7 @@ def along_profile(quantity_grid, profile_table):
     grid_log10rho = np.arange(-8.0,6.04,0.05)
     grid_log10T = np.arange(2.0,8.04,0.05)
 
-    interp_quantity = interpolate.RegularGridInterpolator(points=(grid_log10rho, grid_log10T), values=quantity_grid, bounds_error=False, fill_value=None, method='slinear')
+    interp_quantity = interpolate.RegularGridInterpolator(points=(grid_log10rho, grid_log10T), values=quantity_grid, bounds_error=False, fill_value=None, method='linear')
     
     quantity_arr = interp_quantity((profile_table['logRho'], profile_table['logT']))
 
