@@ -1,0 +1,39 @@
+#!/bin/bash
+
+#cp ./run_star_extras.f90 ./eos_CMS19_orig_1st_implementation/src
+#cp ./run_star_extras.f90 ./eos_CMS19_orig_meos_implementation/src    
+#cp ./run_star_extras.f90 ./eos_CD21+AQUA_orig_meos_implementation/src
+#cp ./run_star_extras.f90 ./eos_CD21_Y0275/src
+
+#cp ./run_star_extras.f90 ./eos_CMS19_TC_s=1/src                   
+#cp ./run_star_extras.f90 ./eos_CMS19_TC_s=2/src
+#cp ./run_star_extras.f90 ./eos_CMS19_TC_s=5/src
+#cp ./run_star_extras.f90 ./eos_CMS19_control_s=1_sf=0.05/src      
+#cp ./run_star_extras.f90 ./eos_CMS19_control_s=1_sf=0.1/src 
+#cp ./run_star_extras.f90 ./eos_CMS19_control_s=1_sf=0.25/src
+#cp ./run_star_extras.f90 ./eos_CMS19_control_s=2_sf=0.05/src
+#cp ./run_star_extras.f90 ./eos_CMS19_control_s=2_sf=0.1/src 
+#cp ./run_star_extras.f90 ./eos_CMS19_control_s=2_sf=0.25/src
+#cp ./run_star_extras.f90 ./eos_CMS19_control_s=5_sf=0.05/src
+#cp ./run_star_extras.f90 ./eos_CMS19_control_s=5_sf=0.1/src 
+#cp ./run_star_extras.f90 ./eos_CMS19_control_s=5_sf=0.25/src
+
+cp ./inlist_relax* ./eos_MESA_default
+cp ./inlist_relax* ./eos_CMS19_orig_1st_implementation
+cp ./inlist_relax* ./eos_CMS19_orig_meos_implementation
+cp ./inlist_relax* ./eos_CD21+AQUA_orig_meos_implementation
+cp ./inlist_relax* ./eos_CD21_Y0275
+
+cp ./inlist_relax* ./eos_CMS19_TC_s=1
+cp ./inlist_relax* ./eos_CMS19_TC_s=2
+cp ./inlist_relax* ./eos_CMS19_TC_s=5
+cp ./inlist_relax* ./eos_CMS19_control_s=1_sf=0.05
+cp ./inlist_relax* ./eos_CMS19_control_s=1_sf=0.1
+cp ./inlist_relax* ./eos_CMS19_control_s=1_sf=0.25
+cp ./inlist_relax* ./eos_CMS19_control_s=2_sf=0.05
+cp ./inlist_relax* ./eos_CMS19_control_s=2_sf=0.1
+cp ./inlist_relax* ./eos_CMS19_control_s=2_sf=0.25
+cp ./inlist_relax* ./eos_CMS19_control_s=5_sf=0.05
+cp ./inlist_relax* ./eos_CMS19_control_s=5_sf=0.1 
+cp ./inlist_relax* ./eos_CMS19_control_s=5_sf=0.25
+

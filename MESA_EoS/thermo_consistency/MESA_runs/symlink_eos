@@ -1,0 +1,45 @@
+#!/bin/bash
+
+rm /Users/emily/Documents/astro/giant_planets/MESA_EoS/thermo_consistency/MESA_runs/eos_CMS19_orig_1st_implementation/src/data/*
+rm /Users/emily/Documents/astro/giant_planets/MESA_EoS/thermo_consistency/MESA_runs/eos_CMS19_orig_meos_implementation/src/data/*
+rm /Users/emily/Documents/astro/giant_planets/MESA_EoS/thermo_consistency/MESA_runs/eos_CD21+AQUA_orig_meos_implementation/src/data/*
+rm /Users/emily/Documents/astro/giant_planets/MESA_EoS/thermo_consistency/MESA_runs/eos_CMS19_TC_s=1/src/data/*
+rm /Users/emily/Documents/astro/giant_planets/MESA_EoS/thermo_consistency/MESA_runs/eos_CMS19_TC_s=2/src/data/*
+rm /Users/emily/Documents/astro/giant_planets/MESA_EoS/thermo_consistency/MESA_runs/eos_CMS19_TC_s=5/src/data/*
+rm /Users/emily/Documents/astro/giant_planets/MESA_EoS/thermo_consistency/MESA_runs/eos_CMS19_control_s=1_sf=0.05/src/data/*
+rm /Users/emily/Documents/astro/giant_planets/MESA_EoS/thermo_consistency/MESA_runs/eos_CMS19_control_s=1_sf=0.1/src/data/*
+rm /Users/emily/Documents/astro/giant_planets/MESA_EoS/thermo_consistency/MESA_runs/eos_CMS19_control_s=1_sf=0.25/src/data/*
+rm /Users/emily/Documents/astro/giant_planets/MESA_EoS/thermo_consistency/MESA_runs/eos_CMS19_control_s=2_sf=0.05/src/data/*
+rm /Users/emily/Documents/astro/giant_planets/MESA_EoS/thermo_consistency/MESA_runs/eos_CMS19_control_s=2_sf=0.1/src/data/*
+rm /Users/emily/Documents/astro/giant_planets/MESA_EoS/thermo_consistency/MESA_runs/eos_CMS19_control_s=2_sf=0.25/src/data/*
+rm /Users/emily/Documents/astro/giant_planets/MESA_EoS/thermo_consistency/MESA_runs/eos_CMS19_control_s=5_sf=0.05/src/data/*
+rm /Users/emily/Documents/astro/giant_planets/MESA_EoS/thermo_consistency/MESA_runs/eos_CMS19_control_s=5_sf=0.1/src/data/*
+rm /Users/emily/Documents/astro/giant_planets/MESA_EoS/thermo_consistency/MESA_runs/eos_CMS19_control_s=5_sf=0.25/src/data/*
+rm /Users/emily/Documents/astro/giant_planets/MESA_EoS/thermo_consistency/MESA_runs/eos_CD21_Y0275/src/data/*
+
+
+ln -s /Users/emily/Documents/astro/giant_planets/MESA_EoS/my_MESAformat_tables/mesa-planetblend*.data /Users/emily/Documents/astro/giant_planets/MESA_EoS/thermo_consistency/MESA_runs/eos_CMS19_orig_1st_implementation/src/data
+ln -s /Users/emily/Documents/astro/giant_planets/MESA_EoS/meos_MESAformat_CMS19+HG23+rock+water/mesa-planetblend_*.data /Users/emily/Documents/astro/giant_planets/MESA_EoS/thermo_consistency/MESA_runs/eos_CMS19_orig_meos_implementation/src/data
+ln -s /Users/emily/Documents/astro/giant_planets/MESA_EoS/meos_MESAformat_CD21+AQUA/mesa-CD21+AQUA_*.data /Users/emily/Documents/astro/giant_planets/MESA_EoS/thermo_consistency/MESA_runs/eos_CD21+AQUA_orig_meos_implementation/src/data
+
+ln -s /Users/emily/Documents/astro/giant_planets/MESA_EoS/meos_MESAformat_CMS19+HG23+rock+water/mesa-planetblend-TC_s=1_* /Users/emily/Documents/astro/giant_planets/MESA_EoS/thermo_consistency/MESA_runs/eos_CMS19_TC_s=1/src/data
+ln -s /Users/emily/Documents/astro/giant_planets/MESA_EoS/meos_MESAformat_CMS19+HG23+rock+water/mesa-planetblend-TC_s=2_* /Users/emily/Documents/astro/giant_planets/MESA_EoS/thermo_consistency/MESA_runs/eos_CMS19_TC_s=2/src/data
+ln -s /Users/emily/Documents/astro/giant_planets/MESA_EoS/meos_MESAformat_CMS19+HG23+rock+water/mesa-planetblend-TC_s=5_* /Users/emily/Documents/astro/giant_planets/MESA_EoS/thermo_consistency/MESA_runs/eos_CMS19_TC_s=5/src/data
+
+ln -s /Users/emily/Documents/astro/giant_planets/MESA_EoS/meos_MESAformat_CMS19+HG23+rock+water/mesa-planetblend-control_s=1_sf=0.05_* /Users/emily/Documents/astro/giant_planets/MESA_EoS/thermo_consistency/MESA_runs/eos_CMS19_control_s=1_sf=0.05/src/data
+ln -s /Users/emily/Documents/astro/giant_planets/MESA_EoS/meos_MESAformat_CMS19+HG23+rock+water/mesa-planetblend-control_s=1_sf=0.1_*  /Users/emily/Documents/astro/giant_planets/MESA_EoS/thermo_consistency/MESA_runs/eos_CMS19_control_s=1_sf=0.1/src/data
+ln -s /Users/emily/Documents/astro/giant_planets/MESA_EoS/meos_MESAformat_CMS19+HG23+rock+water/mesa-planetblend-control_s=1_sf=0.25_* /Users/emily/Documents/astro/giant_planets/MESA_EoS/thermo_consistency/MESA_runs/eos_CMS19_control_s=1_sf=0.25/src/data
+
+ln -s /Users/emily/Documents/astro/giant_planets/MESA_EoS/meos_MESAformat_CMS19+HG23+rock+water/mesa-planetblend-control_s=2_sf=0.05_* /Users/emily/Documents/astro/giant_planets/MESA_EoS/thermo_consistency/MESA_runs/eos_CMS19_control_s=2_sf=0.05/src/data
+ln -s /Users/emily/Documents/astro/giant_planets/MESA_EoS/meos_MESAformat_CMS19+HG23+rock+water/mesa-planetblend-control_s=2_sf=0.1_*  /Users/emily/Documents/astro/giant_planets/MESA_EoS/thermo_consistency/MESA_runs/eos_CMS19_control_s=2_sf=0.1/src/data
+ln -s /Users/emily/Documents/astro/giant_planets/MESA_EoS/meos_MESAformat_CMS19+HG23+rock+water/mesa-planetblend-control_s=2_sf=0.25_* /Users/emily/Documents/astro/giant_planets/MESA_EoS/thermo_consistency/MESA_runs/eos_CMS19_control_s=2_sf=0.25/src/data
+
+ln -s /Users/emily/Documents/astro/giant_planets/MESA_EoS/meos_MESAformat_CMS19+HG23+rock+water/mesa-planetblend-control_s=5_sf=0.05_* /Users/emily/Documents/astro/giant_planets/MESA_EoS/thermo_consistency/MESA_runs/eos_CMS19_control_s=5_sf=0.05/src/data
+ln -s /Users/emily/Documents/astro/giant_planets/MESA_EoS/meos_MESAformat_CMS19+HG23+rock+water/mesa-planetblend-control_s=5_sf=0.1_*  /Users/emily/Documents/astro/giant_planets/MESA_EoS/thermo_consistency/MESA_runs/eos_CMS19_control_s=5_sf=0.1/src/data
+ln -s /Users/emily/Documents/astro/giant_planets/MESA_EoS/meos_MESAformat_CMS19+HG23+rock+water/mesa-planetblend-control_s=5_sf=0.25_* /Users/emily/Documents/astro/giant_planets/MESA_EoS/thermo_consistency/MESA_runs/eos_CMS19_control_s=5_sf=0.25/src/data
+
+
+ln -s /Users/emily/Documents/astro/giant_planets/MESA_EoS/meos_MESAformat_CD21+AQUA/mesa-CD21+AQUA_00z100x.data /Users/emily/Documents/astro/giant_planets/MESA_EoS/thermo_consistency/MESA_runs/eos_CD21_Y0275/src/data
+ln -s /Users/emily/Documents/astro/giant_planets/MESA_EoS/meos_MESAformat_CD21+AQUA/mesa-CD21+AQUA_00z00x.data /Users/emily/Documents/astro/giant_planets/MESA_EoS/thermo_consistency/MESA_runs/eos_CD21_Y0275/src/data
+ln -s /Users/emily/Documents/astro/giant_planets/MESA_EoS/meos_MESAformat_CD21+AQUA/mesa-CD21+AQUA_Y0275.data /Users/emily/Documents/astro/giant_planets/MESA_EoS/thermo_consistency/MESA_runs/eos_CD21_Y0275/src/data/mesa-CD21+AQUA_00z725x.data
+

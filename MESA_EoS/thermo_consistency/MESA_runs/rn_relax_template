@@ -1,0 +1,13 @@
+#!/bin/bash
+
+# this provides the definition of do_one (run one part of test)
+# do_one [inlist] [output model] [LOGS directory]
+source "${MESA_DIR}/star/test_suite/test_suite_helpers"
+
+#do_one inlist_create_header <<create_model_filename>>
+python /Users/emily/Documents/astro/giant_planets/science_runs/2_relaxed_models/generate_composition_profile.py <<create_profile_name>> <<functional_form>> <<composition_outfile_name>> <<entropy_outfile_name>> <<desired_specific_entropy>> <<desired_mz>> <<desired_zc>> <<desired_zatm>> <<desired_q1>>
+do_one inlist_relax_header <<relax_model_filename>>
+
+date "+DATE: %Y-%m-%d%nTIME: %H:%M:%S"
+echo 'finished'
+

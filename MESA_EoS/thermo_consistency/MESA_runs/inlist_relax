@@ -1,0 +1,102 @@
+! inlist_relax
+
+&star_job
+
+   show_log_description_at_start = .false.
+
+   load_saved_model = .true.
+   load_model_filename ='/Users/emily/Documents/astro/giant_planets/science_runs/1_created_models/planet_create_20.0_Mj_10.0_Rj.mod'
+
+   save_model_when_terminate = .true.
+   save_model_filename ='/Users/emily/Documents/astro/giant_planets/science_runs/2_relaxed_models/core_only_relaxed/planet_relax_20.0_Mj_10.0_Rj_zbar=0.01_core_only_s=8.0.mod'
+
+
+   write_profile_when_terminate = .TRUE.
+   filename_for_profile_when_terminate ='/Users/emily/Documents/astro/giant_planets/science_runs/2_relaxed_models/core_only_relaxed/planet_relax_20.0_Mj_10.0_Rj_zbar=0.01_core_only_s=8.0.profile'
+
+   set_initial_cumulative_energy_error = .true.
+   new_cumulative_energy_error = 0d0
+
+   set_initial_age = .true.
+   initial_age = 0.d0 ! in years
+      
+   !pgstar_flag = .true.
+      
+   ! save history of particular params
+   history_columns_file = 'history_columns.list'
+   profile_columns_file = 'profile_columns.list'
+
+   ! insert relax_initial_composition lines here (note that it's not possible to do the timestep control stuff in the same way as relax_initial_entropy)
+   relax_initial_composition = .true.
+   relax_composition_filename ='/Users/emily/Documents/astro/giant_planets/science_runs/2_relaxed_models/core_only_relaxed/composition_20.0_Mj_10.0_Rj_zbar=0.01_core_only_s=8.0.dat'
+   
+   ! set the initial timestep to 1 year
+   set_initial_dt = .true.
+   ! relax_composition will finish in 1*dt = 1 year
+   years_for_initial_dt =1
+   ! 1/timescale_for_relax_composition = number of (internal) steps over which composition is relaxed
+   ! e.g. if this == 1d-2, then 100 of these (internal) relaxation steps = 1*dt
+   timescale_for_relax_composition =1d-3
+     
+   ! insert relax_initial_entropy lines here
+   relax_initial_entropy = .true.
+   relax_entropy_filename ='/Users/emily/Documents/astro/giant_planets/science_runs/2_relaxed_models/core_only_relaxed/entropy_20.0_Mj_10.0_Rj_zbar=0.01_core_only_s=8.0.dat'
+   timescale_for_relax_entropy = 1d-10
+   max_dt_for_relax_entropy = 1d-9
+   num_timescales_for_relax_entropy = 100
+      
+   required_termination_code_string = 'max_age'
+
+/ ! end of star_job namelist
+   
+&eos
+   use_other_eos_component = .true.
+   use_other_eos_results = .true.
+   eos_integer_ctrl(1) = 1
+   eos_integer_ctrl(2) = 1 ! 1 for linear interpolation in Z, 2 for MESA-style cubic (?) interpolation
+   eos_logical_ctrl(1) = .false.
+   eos_character_ctrl(1) = ''
+/ ! end of eos namelist
+
+&kap
+   Zbase = 0.0169d0
+   kap_file_prefix = 'gs98'
+   kap_lowT_prefix = 'lowT_Freedman11'     
+/ ! end of kap namelist
+
+
+&controls
+
+   atm_option = 'T_tau'
+   atm_T_tau_relation = 'Eddington'
+   atm_T_tau_opacity = 'fixed'
+
+   mesh_delta_coeff = 0.25d0
+   
+   convergence_ignore_equL_residuals = .true.
+   make_gradr_sticky_in_solver_iters = .true.
+   mlt_make_surface_no_mixing = .false.   
+   energy_eqn_option = 'dedt'
+   use_gold2_tolerances =.false.
+   
+   ! limit max_model_number as part of test_suite
+   max_model_number = 500
+
+   mixing_length_alpha = 2.0d0
+   max_age = 1.0d4
+   
+   photo_interval = 50
+   profile_interval = 50
+   history_interval = 10
+   terminal_interval = 10
+   write_header_frequency = 50
+
+   ! debugging
+   !report_solver_progress = .true. ! set true to see info about solver iterations
+   !report_ierr = .true. ! if true, produce terminal output when have some internal error
+   
+
+/ ! end of controls namelist
+
+&pgstar
+/ ! end of pgstar namelist
